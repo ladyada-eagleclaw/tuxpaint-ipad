@@ -1,0 +1,58 @@
+name: iPad build
+on:
+  push:
+    branches: [ipad-cloud-build]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ipad-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        sdk: [iphoneos, iphonesimulator]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select Xcode 26
+        run: |
+          sudo xcode-select -s /Applications/Xcode_26.3.app/Contents/Developer
+          xcodebuild -version
+      - name: Configure
+        run: >-
+          cmake -S ipad -B build-ipad -G Xcode
+          -DCMAKE_SYSTEM_NAME=iOS
+          -DCMAKE_OSX_SYSROOT=${{ matrix.sdk }}
+          -DCMAKE_OSX_ARCHITECTURES=arm64
+          -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0
+          -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+      - name: Compile
+        run: cmake --build build-ipad --config Release --target TuxPaint --parallel 3
+      - name: Package unsigned app
+        run: |
+          mkdir -p artifacts
+          app=$(find build-ipad -maxdepth 3 -name TuxPaint.app -type d | head -1)
+          test -n "$app"
+          ditto -c -k --sequesterRsrc --keepParent "$app" artifacts/TuxPaint-${{ matrix.sdk }}.zip
+      - name: Launch on iPad simulator
+        if: matrix.sdk == 'iphonesimulator'
+        run: |
+          device=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; ds=json.load(sys.stdin)["devices"]; print(next(d["udid"] for group in reversed(list(ds.values())) for d in group if "iPad" in d["name"]))')
+          xcrun simctl boot "$device"
+          xcrun simctl bootstatus "$device" -b
+          app=$(find build-ipad -maxdepth 3 -name TuxPaint.app -type d | head -1)
+          xcrun simctl install "$device" "$app"
+          xcrun simctl launch "$device" org.ladyada.tuxpaint.ipad
+          sleep 15
+          xcrun simctl spawn "$device" launchctl list | grep org.ladyada.tuxpaint.ipad
+          xcrun simctl io "$device" screenshot artifacts/ipad-launch.png
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: TuxPaint-${{ matrix.sdk }}
+          path: artifacts/
+          retention-days: 7

@@ -747,12 +747,6 @@ enum
 };
 
 
-#ifdef __IPHONEOS__
-
-void IOSMisc_StartAD(SDL_Window * sdlWindow, float x, float y, float w, float h);
-#endif
-
-
 /* Color globals (copied from colors.h, if no colors specified by user) */
 
 static int NUM_COLORS;
@@ -816,7 +810,11 @@ static float render_scale;      /* Scale factor for the render */
 
 static int button_w;            /* was 48 */
 static int button_h;            /* was 48 */
+#ifdef __IOS__
+static int button_size_auto = 1;        /* Keep controls usable on every iPad size. */
+#else
 static int button_size_auto = 0;        /* if the size of buttons should be autocalculated */
+#endif
 static float button_scale;      /* scale factor to be applied to the size of buttons */
 static int color_button_w;      /* was 32 */
 static int color_button_h;      /* was 48 */
@@ -7028,10 +7026,6 @@ static void mainloop(void)
 
     SDL_Delay(10);
       
-#ifdef __IPHONEOS__
-    //IOSMisc_StartAD(sdlWindow, screen->w/2-160, r_colors.y-48, 320, 48);
-    IOSMisc_StartAD(window_screen, 0, 0, screen->w, render_scale);
-#endif
   }
   while (!done);
 
@@ -28728,11 +28722,7 @@ static void setup_config(char *argv[])
 #ifdef WIN32
     picturesdir = GetUserImageDir();
 #elif __APPLE__
-#ifdef __IPHONEOS__
-    picturesdir = strdup(savedir);
-#else
     picturesdir = strdup(apple_picturesPath());
-#endif
 #elif __ANDROID__
     picturesdir = strdup(SDL_AndroidGetExternalStoragePath());
     char *substring = strstr(picturesdir, "/Android");
@@ -31176,7 +31166,7 @@ int main(int argc, char *argv[])
   progname = argv[0];
 
 #if defined(DEBUG)
-#if defined(__APPLE__)
+#if defined(__APPLE__) && !defined(__IOS__)
   /* EP added block to log messages */
   freopen("/tmp/tuxpaint.log", "w", stdout);    /* redirect stdout to a file */
 #elif defined (__ANDROID__)
@@ -31261,10 +31251,6 @@ int main(int argc, char *argv[])
   DEBUG_PRINTF("Seconds in early start-up: %.3f\n", (double)(time2 - time1) / CLOCK_SPEED);
   DEBUG_PRINTF("Seconds in late start-up:  %.3f\n", (double)(time2 - time1) / CLOCK_SPEED);
 #endif
-/*#ifdef  __IPHONEOS__
-    //IOSMisc_StartAD(sdlWindow, screen->w/2-160, r_colors.y-48, 320, 48);
-    IOSMisc_StartAD(window_screen, 0, 0, screen->w, render_scale);
-#endif*/
 
 
 #ifdef DEBUG
@@ -32522,7 +32508,6 @@ static int export_pict(char *fname, int where, char * orig_fname)
     return EXPORT_ERR_CANNOT_SAVE;
   }
 
-#ifndef __IPHONEOS__
   while (!feof(fi))
   {
     len = fread(buf, sizeof(unsigned char), sizeof(buf), fi);
@@ -32531,13 +32516,14 @@ static int export_pict(char *fname, int where, char * orig_fname)
       fwrite(buf, sizeof(unsigned char), len, fo);
     }
   }
-#else
-  ExportPicToPhone(fname);
-#endif
   /* FIXME: Probably good to check for errors here and respond accordingly -bjk 2020.07.26 */
 
   fclose(fi);
   fclose(fo);
+
+#ifdef __IPHONEOS__
+  ExportPicToPhone(pict_fname);
+#endif
 
   free(pict_fname);
 
@@ -32673,14 +32659,10 @@ static char *get_export_filepath(const char *ext)
       return NULL;
     }
   }
-#ifdef __IPHONEOS__
-  safe_snprintf(fname, sizeof(fname), "giftmp1234.%s", ext);
-#else
   /* Create a unique filename, within that dir */
   t = time(NULL);
   strftime(timestamp, sizeof(timestamp), "%Y%m%d%H%M%S", localtime(&t));
   safe_snprintf(fname, sizeof(fname), "%s.%s", timestamp, ext);
-#endif
   rname = get_fname(fname, DIR_EXPORT);
   debug(rname);
 
