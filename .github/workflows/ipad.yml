@@ -22,6 +22,12 @@ jobs:
         run: |
           sudo xcode-select -s /Applications/Xcode_26.3.app/Contents/Developer
           xcodebuild -version
+      - uses: actions/cache/restore@v4
+        id: build-cache
+        with:
+          path: build-ipad
+          key: ipad-xcode26.3-${{ matrix.sdk }}-${{ hashFiles('ipad/CMakeLists.txt') }}
+          restore-keys: ipad-xcode26.3-${{ matrix.sdk }}-
       - name: Configure
         run: >-
           cmake -S ipad -B build-ipad -G Xcode
@@ -41,7 +47,9 @@ jobs:
       - name: Launch on iPad simulator
         if: matrix.sdk == 'iphonesimulator'
         run: |
-          device=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; ds=json.load(sys.stdin)["devices"]; print(next(d["udid"] for group in reversed(list(ds.values())) for d in group if "iPad" in d["name"]))')
+          device_type=$(xcrun simctl list devicetypes -j | python3 -c 'import json,sys; ds=json.load(sys.stdin)["devicetypes"]; print(next(d["identifier"] for d in ds if "12.9" in d["name"] and "5th generation" in d["name"]))')
+          runtime=$(xcrun simctl list runtimes -j | python3 -c 'import json,sys; rs=json.load(sys.stdin)["runtimes"]; print(next(r["identifier"] for r in reversed(rs) if r["isAvailable"] and "iOS" in r["name"]))')
+          device=$(xcrun simctl create "Luna iPad Pro 12.9" "$device_type" "$runtime")
           xcrun simctl boot "$device"
           xcrun simctl bootstatus "$device" -b
           app=$(find build-ipad -maxdepth 3 -name TuxPaint.app -type d | head -1)
@@ -56,3 +64,8 @@ jobs:
           name: TuxPaint-${{ matrix.sdk }}
           path: artifacts/
           retention-days: 7
+      - uses: actions/cache/save@v4
+        if: always() && steps.build-cache.outputs.cache-hit != 'true'
+        with:
+          path: build-ipad
+          key: ${{ steps.build-cache.outputs.cache-primary-key }}
