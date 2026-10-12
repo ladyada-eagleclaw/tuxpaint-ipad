@@ -8856,6 +8856,24 @@ static void loadstamp_finisher(stamp_type * sd, unsigned w, unsigned h, double r
     mid = compute_default_scale_factor(0.2);
   }
 
+#ifdef __IOS__
+  /* Match the bundled birthday cake's default longest edge (354px at 25%).
+     Pick the closest existing size step, preserving proportions and sliders. */
+  unsigned cake_size = compute_default_scale_factor(0.25);
+  double target = 354.0 * scaletable[cake_size].numer / scaletable[cake_size].denom;
+  double best_error = HUGE_VAL;
+  for (unsigned size = lower; size <= underscanned_upper; size++)
+  {
+    double extent = (double)max(w, h) * scaletable[size].numer / scaletable[size].denom;
+    double error = fabs(log(extent / target));
+    if (error < best_error)
+    {
+      best_error = error;
+      mid = size;
+    }
+  }
+#endif
+
   if (mid > upper)
     mid = upper;
 
@@ -24095,10 +24113,14 @@ static int do_new_dialog_content(void)
             update_list = 1;
 
 
-            if (which == last_click_which &&
-                SDL_GetTicks() < last_click_time + 1000 && event.button.button == last_click_button)
+            if (
+#ifdef __IOS__
+                event.button.which == SDL_TOUCH_MOUSEID ||
+#endif
+                (which == last_click_which &&
+                 SDL_GetTicks() < last_click_time + 1000 && event.button.button == last_click_button))
             {
-              /* Double-click! */
+              /* A touch selects immediately; a mouse retains double-click. */
 
               done = 1;
             }
@@ -31760,6 +31782,10 @@ static void claim_to_be_ready(void)
 
   /* Draw the screen! */
 
+#ifdef __IOS__
+  /* The compact layout uses the old progress-bar area for the color palette. */
+  progress_bar_disabled = 1;
+#endif
   SDL_FillRect(screen, NULL, SDL_MapRGB(screen->format, 255, 255, 255));
 
   draw_toolbar();

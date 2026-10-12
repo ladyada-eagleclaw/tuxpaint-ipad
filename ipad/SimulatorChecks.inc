@@ -66,6 +66,22 @@ static void ios_simulator_checks(void)
   if (phase == 0)
   {
     if (SDL_GetTicks() < 1000) return;
+    stamp_type cake = {0}, cherry = {0}, wide = {0};
+    cake.stampname = "birthday cake fixture";
+    cherry.stampname = "cherry fixture";
+    wide.stampname = "wide stamp fixture";
+    loadstamp_finisher(&cake, 354, 348, 0.25);
+    loadstamp_finisher(&cherry, 340, 400, 1.0);
+    loadstamp_finisher(&wide, 2000, 200, 1.0);
+    double cake_extent = 354.0 * scaletable[cake.size].numer / scaletable[cake.size].denom;
+    double cherry_extent = 400.0 * scaletable[cherry.size].numer / scaletable[cherry.size].denom;
+    double wide_extent = 2000.0 * scaletable[wide.size].numer / scaletable[wide.size].denom;
+    ios_test_require(cherry_extent >= cake_extent / 1.25 && cherry_extent <= cake_extent * 1.25,
+                      "Cherry defaults to approximately the cake's size");
+    ios_test_require(wide_extent >= cake_extent / 1.25 && wide_extent <= cake_extent * 1.25,
+                      "Large source images default to approximately the cake's size");
+    ios_test_require(cherry.min < cherry.size && cherry.max > cherry.size,
+                      "Normalized stamps can still be resized in either direction");
     ios_test_finger(SDL_FINGERDOWN, 1, cx - 50, cy);
     ios_test_finger(SDL_FINGERDOWN, 2, cx + 50, cy);
     ios_test_finger(SDL_FINGERMOTION, 1, cx - 100, cy);
@@ -136,7 +152,15 @@ static void ios_simulator_checks(void)
     SDL_FreeSurface(exported);
     int previous_prompt = promptless_save;
     promptless_save = SAVE_OVER_ALWAYS;
+    size_t palette_size = screen->pitch * 24;
+    void *palette = SDL_malloc(palette_size);
+    ios_test_require(palette != NULL, "Allocate palette screenshot");
+    void *palette_pixels = (Uint8 *)screen->pixels + (screen->h - 24) * screen->pitch;
+    SDL_memcpy(palette, palette_pixels, palette_size);
     ios_test_require(do_save(cur_tool, 1, 0), "Explicit Save succeeds");
+    ios_test_require(SDL_memcmp(palette, palette_pixels, palette_size) == 0,
+                      "Save leaves the bottom color palette intact");
+    SDL_free(palette);
     promptless_save = previous_prompt;
     SDL_FillRect(canvas, NULL, SDL_MapRGB(canvas->format, 255, 255, 255));
     load_current();
@@ -166,6 +190,18 @@ static void ios_simulator_checks(void)
   else if (phase == 8)
   {
     ios_test_require(cur_tool == TOOL_BRUSH && ios_view.zoom == 1, "Brush and Fit Drawing work in Kids Mode");
+    size_t palette_size = screen->pitch * 24;
+    void *palette = SDL_malloc(palette_size);
+    ios_test_require(palette != NULL, "Allocate palette screenshot for New");
+    void *palette_pixels = (Uint8 *)screen->pixels + (screen->h - 24) * screen->pitch;
+    SDL_memcpy(palette, palette_pixels, palette_size);
+    ios_test_require(!new_colors_last, "New starts with background colors");
+    ios_test_tap(r_ttools.w + THUMB_W / 2, img_scroll_up->h + THUMB_H / 2);
+    ios_test_require(do_new_dialog(), "One touch chooses a new background");
+    ios_test_require(ios_test_white(painted_x, painted_y), "New replaces the old drawing with the chosen white background");
+    ios_test_require(SDL_memcmp(palette, palette_pixels, palette_size) == 0,
+                      "New leaves the bottom color palette intact");
+    SDL_free(palette);
     ios_checkpoint();
     if (strcmp(mode, "share") == 0) ios_export_current(IOS_ACTION_SHARE);
     char *result_path = get_fname("features-verified.txt", DIR_SAVE);
