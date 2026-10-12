@@ -29945,6 +29945,9 @@ static void setup(void)
   /* Deal with orientation rotation option */
 #if defined __ANDROID__
   SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeRight");
+#elif defined __IOS__
+  /* Native-size windows start at 0x0, so SDL cannot infer landscape. */
+  SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight");
 #endif
 
   if (rotate_orientation)
