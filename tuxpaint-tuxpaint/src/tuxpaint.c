@@ -811,7 +811,7 @@ static float render_scale;      /* Scale factor for the render */
 static int button_w;            /* was 48 */
 static int button_h;            /* was 48 */
 #ifdef __IOS__
-static int button_size_auto = 1;        /* Keep controls usable on every iPad size. */
+static int button_size_auto = 1;        /* Size controls for iPhone and iPad screens. */
 #else
 static int button_size_auto = 0;        /* if the size of buttons should be autocalculated */
 #endif
