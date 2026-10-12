@@ -1067,7 +1067,25 @@ static Uint32 window_format;
 
 static void SDL_WarpMouse(Uint16 x, Uint16 y)
 {
+#ifdef __IOS__
+  int window_x, window_y;
+  SDL_RenderLogicalToWindow(renderer, x, y, &window_x, &window_y);
+  SDL_WarpMouseInWindow(window_screen, window_x, window_y);
+#else
   SDL_WarpMouseInWindow(window_screen, x, y);
+#endif
+}
+
+static Uint32 get_mouse_state(int *x, int *y)
+{
+  Uint32 buttons = SDL_GetMouseState(x, y);
+#ifdef __IOS__
+  float logical_x, logical_y;
+  SDL_RenderWindowToLogical(renderer, *x, *y, &logical_x, &logical_y);
+  *x = (int)logical_x;
+  *y = (int)logical_y;
+#endif
+  return buttons;
 }
 
 static SDL_Surface *SDL_DisplayFormat(SDL_Surface * surface)
@@ -1088,6 +1106,9 @@ static SDL_Surface *SDL_DisplayFormatAlpha(SDL_Surface * surface)
 
 static void SDL_Flip(SDL_Surface * screen)
 {
+#ifdef __IOS__
+  apple_apply_safe_area(window_screen, renderer);
+#endif
   //SDL_UpdateWindowSurface(window_screen);
   SDL_UpdateTexture(texture, NULL, screen->pixels, screen->pitch);
   SDL_RenderClear(renderer);
@@ -1098,6 +1119,9 @@ static void SDL_Flip(SDL_Surface * screen)
 static void SDL_UpdateRect(SDL_Surface * screen, Sint32 x, Sint32 y, Sint32 w, Sint32 h)
 {
   SDL_Rect r;
+#ifdef __IOS__
+  apple_apply_safe_area(window_screen, renderer);
+#endif
 
   r.x = x;
   r.y = y;
@@ -5309,7 +5333,7 @@ static void mainloop(void)
               {
                 int mx, my;
 
-                SDL_GetMouseState(&mx, &my);
+                get_mouse_state(&mx, &my);
                 old_x = mx - r_canvas.x;
                 old_y = my - r_canvas.y;
                 maybe_redraw_eraser_xor();
@@ -5733,7 +5757,7 @@ static void mainloop(void)
         SDL_Rect r_notcontrols;
         SDL_Rect r_items;       /* = r_notcontrols; */
 
-        SDL_GetMouseState(&xpos, &ypos);
+        get_mouse_state(&xpos, &ypos);
 
         /* Scroll wheel code.
            WARNING: this must be kept in sync with the mouse-move
@@ -24428,7 +24452,7 @@ static int do_color_sel(int temp_mode)
 
     /* Temp mode: Grab color from canvas under the mouse immediately
        (let the motion-handling code in the loop below do it for us!) */
-    SDL_GetMouseState(&mx, &my);
+    get_mouse_state(&mx, &my);
     SDL_WarpMouse(mx - 1, my);  /* Need to move to a different spot, or no events occur */
     SDL_WarpMouse(mx, my);
 
@@ -24660,7 +24684,7 @@ static void do_quick_eraser(void)
   rec_undo_buffer();
 
   /* Do an initial erase at the click location */
-  SDL_GetMouseState(&mx, &my);
+  get_mouse_state(&mx, &my);
   eraser_draw(mx - r_canvas.x, my - r_canvas.y,
               mx - r_canvas.x, my - r_canvas.y);
 
@@ -30229,6 +30253,9 @@ static void setup(void)
   }
 
   SDL_RenderSetLogicalSize(renderer, WINDOW_WIDTH, WINDOW_HEIGHT);
+#ifdef __IOS__
+  apple_apply_safe_area(window_screen, renderer);
+#endif
 
   window_format = SDL_GetWindowPixelFormat(window_screen);
 
@@ -32983,7 +33010,7 @@ void maybe_redraw_eraser_xor(void)
 
   if (cur_tool == TOOL_ERASER)
   {
-    SDL_GetMouseState(&mx, &my);
+    get_mouse_state(&mx, &my);
     /* FIXME: If you're moving the mouse WHILE hitting Ctrl-Z,
        the XOR could happen in the wrong place :-/ -bjk 2023.05.22 */
     if (hit_test(&r_canvas, mx, my))

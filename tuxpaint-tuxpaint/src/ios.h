@@ -32,6 +32,9 @@ const char *apple_preferencesPath(void);
 const char *apple_globalPreferencesPath(void);
 const char *apple_picturesPath(void);
 int apple_trash(const char *path);
+struct SDL_Window;
+struct SDL_Renderer;
+void apple_apply_safe_area(struct SDL_Window *window, struct SDL_Renderer *renderer);
 
 
 #endif /* __IOS_H__ */
