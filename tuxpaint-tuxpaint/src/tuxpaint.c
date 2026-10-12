@@ -872,7 +872,11 @@ static void set_max_buttonscale(void)
   float max_w, max_h;
 
   /* WINDOW_WIDTH / original size of tools columns + 9 buttons + tooloption columns */
+#ifdef __IOS__
+  max_w = (float)WINDOW_WIDTH / (gd_tools.cols * 60 + (9 * 48) + (gd_toolopt.cols * 48));
+#else
   max_w = (float)WINDOW_WIDTH / (gd_tools.cols * 48 + (9 * 48) + (gd_toolopt.cols * 48));
+#endif
 
   /* WINDOW_HEIGHT / original size of r_ttools.h + 5 buttons + colors rows + tux area */
   max_h = (float)WINDOW_HEIGHT / (40 + (6 * 48) + (gd_colors.rows * 48) + 56);
@@ -12103,7 +12107,7 @@ static void do_undo(void)
       }
     }
 
-    update_canvas(0, 0, (WINDOW_WIDTH - r_ttoolopt.w), (button_h * 7) + 40 + HEIGHTOFFSET);
+    update_canvas(0, 0, canvas->w, canvas->h);
 
 
     if (cur_undo == oldest_undo)
@@ -12160,7 +12164,7 @@ static void do_redo(void)
     do_redo_label_node();
     SDL_BlitSurface(undo_bufs[cur_undo], NULL, canvas, NULL);
 
-    update_canvas(0, 0, (WINDOW_WIDTH - r_ttoolopt.w), (button_h * 7) + 40 + HEIGHTOFFSET);
+    update_canvas(0, 0, canvas->w, canvas->h);
 
     been_saved = 0;
   }
@@ -12407,11 +12411,11 @@ static void rect_xor(int x1, int y1, int x2, int y2)
   if (x2 >= (WINDOW_WIDTH - r_ttoolopt.w - r_ttools.w))
     x2 = (WINDOW_WIDTH - r_ttoolopt.w - r_ttools.w) - 1;
 
-  if (y1 >= (button_h * 7) + 40 + HEIGHTOFFSET)
-    y1 = (button_h * 7) + 40 + HEIGHTOFFSET - 1;
+  if (y1 >= r_canvas.h)
+    y1 = r_canvas.h - 1;
 
-  if (y2 >= (button_h * 7) + 40 + HEIGHTOFFSET)
-    y2 = (button_h * 7) + 40 + HEIGHTOFFSET - 1;
+  if (y2 >= r_canvas.h)
+    y2 = r_canvas.h - 1;
 
   line_xor(x1, y1, x2, y1);
   line_xor(x2, y1, x2, y2);
@@ -20435,8 +20439,8 @@ static void do_render_cur_text(int do_blit)
 
     if (dest.x + dest.w > WINDOW_WIDTH - r_ttoolopt.w)
       dest.w = WINDOW_WIDTH - r_ttoolopt.w - dest.x;
-    if (dest.y + dest.h > (button_h * buttons_tall + r_ttools.h))
-      dest.h = (button_h * buttons_tall + r_ttools.h) - dest.y;
+    if (dest.y + dest.h > r_canvas.h)
+      dest.h = r_canvas.h - dest.y;
 
     SDL_FillRect(screen, &dest, SDL_MapRGB(canvas->format, 0, 0, 0));
 
@@ -20454,8 +20458,8 @@ static void do_render_cur_text(int do_blit)
 
     if (dest.x + dest.w > WINDOW_WIDTH - r_ttoolopt.w)
       dest.w = WINDOW_WIDTH - r_ttoolopt.w - dest.x;
-    if (dest.y + dest.h > (button_h * buttons_tall + r_ttools.h))
-      dest.h = (button_h * buttons_tall + r_ttools.h) - dest.y;
+    if (dest.y + dest.h > r_canvas.h)
+      dest.h = r_canvas.h - dest.y;
 
     if ((color_hexes[cur_color][0] + color_hexes[cur_color][1] + color_hexes[cur_color][2]) >= 384)
     {
@@ -20486,8 +20490,8 @@ static void do_render_cur_text(int do_blit)
 
     if (dest.x + src.w > WINDOW_WIDTH - r_ttoolopt.w - r_ttools.w)
       src.w = WINDOW_WIDTH - r_ttoolopt.w - r_ttools.w - dest.x;
-    if (dest.y + src.h > (button_h * buttons_tall + r_ttools.h))
-      src.h = (button_h * buttons_tall + r_ttools.h) - dest.y;
+    if (dest.y + src.h > r_canvas.h)
+      src.h = r_canvas.h - dest.y;
 
     if (do_blit)
     {
@@ -27278,8 +27282,8 @@ static void simply_render_node(struct label_node *node)
 
     if (dest.x + src.w > WINDOW_WIDTH - r_ttoolopt.w - r_ttools.w)
       src.w = WINDOW_WIDTH - r_ttoolopt.w - r_ttools.w - dest.x;
-    if (dest.y + src.h > (button_h * buttons_tall + r_ttools.h))
-      src.h = (button_h * buttons_tall + r_ttools.h) - dest.y;
+    if (dest.y + src.h > r_canvas.h)
+      src.h = r_canvas.h - dest.y;
 
     myblit(node->label_node_surface, &src, label, &dest);
 
@@ -30540,8 +30544,8 @@ static void setup(void)
 
   /* Create drawing canvas: */
 
-  canvas_width = WINDOW_WIDTH - r_ttools.w - r_ttoolopt.w;
-  canvas_height = (button_h * buttons_tall) + r_ttools.h;
+  canvas_width = r_canvas.w;
+  canvas_height = r_canvas.h;
 
   DEBUG_PRINTF("Canvas size is %d x %d\n", canvas_width, canvas_height);
 
@@ -30597,8 +30601,8 @@ static void setup(void)
   /* Creating the label surface: */
 
   label = SDL_CreateRGBSurface(screen->flags,
-                               WINDOW_WIDTH - (r_ttools.w * 2),
-                               (button_h * 7) + 40 + HEIGHTOFFSET,
+                               r_canvas.w,
+                               r_canvas.h,
                                screen->format->BitsPerPixel,
                                screen->format->Rmask, screen->format->Gmask, screen->format->Bmask, TPAINT_AMASK);
 
