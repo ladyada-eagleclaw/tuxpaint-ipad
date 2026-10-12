@@ -347,7 +347,6 @@ typedef struct safer_dirent
 
 /* iOS */
 
-#define AUTOSAVE_GOING_BACKGROUND
 #include "ios_print.h"
 
 #else /* __MACOS__, __IOS__ */
@@ -811,6 +810,12 @@ static float render_scale;      /* Scale factor for the render */
 
 static int button_w;            /* was 48 */
 static int button_h;            /* was 48 */
+static int tool_button_w, tool_button_h; /* Left toolbar cells; options keep their own size. */
+#ifdef __IOS__
+#define TOOLBAR_TOOL_COUNT TOOL_PRINT /* Print and Quit are not available on iOS. */
+#else
+#define TOOLBAR_TOOL_COUNT NUM_TOOLS
+#endif
 #ifdef __IOS__
 static int button_size_auto = 1;        /* Size controls for iPhone and iPad screens. */
 #else
@@ -885,13 +890,18 @@ static void setup_normal_screen_layout(void)
 {
   button_w = 48 * button_scale;
   button_h = 48 * button_scale;
+  tool_button_w = button_w;
+  tool_button_h = button_h;
+#ifdef __IOS__
+  tool_button_w = button_w * 5 / 4;
+#endif
 
   gd_toolopt.cols = 2;
   gd_tools.cols = 2;
 
   r_ttools.x = 0;
   r_ttools.y = 0;
-  r_ttools.w = gd_tools.cols * button_w;
+  r_ttools.w = gd_tools.cols * tool_button_w;
   r_ttools.h = 40 * button_scale;
 
   r_ttoolopt.w = gd_toolopt.cols * button_w;
@@ -907,7 +917,7 @@ static void setup_normal_screen_layout(void)
   r_tcolors.h = r_colors.h;
 
   r_tcolors.x = 0;
-  r_tcolors.w = gd_tools.cols * button_w;
+  r_tcolors.w = r_ttools.w;
   r_colors.x = r_tcolors.w;
   r_colors.w = WINDOW_WIDTH - r_tcolors.w;
 
@@ -917,15 +927,19 @@ static void setup_normal_screen_layout(void)
      without any leftover bit on the end. Hmmm... */
   /* r_colors.w = color_button_w * gd_colors.cols; */
 
-  r_canvas.x = gd_tools.cols * button_w;
+  r_canvas.x = r_ttools.w;
   r_canvas.y = 0;
-  r_canvas.w = WINDOW_WIDTH - (gd_tools.cols + gd_toolopt.cols) * button_w;
+  r_canvas.w = WINDOW_WIDTH - r_ttools.w - r_ttoolopt.w;
 
   r_tuxarea.x = 0;
   r_tuxarea.w = WINDOW_WIDTH;
 
   /* need 56 minimum for the Tux area */
+#ifdef __IOS__
+  buttons_tall = (WINDOW_HEIGHT - r_ttoolopt.h - r_colors.h) / button_h;
+#else
   buttons_tall = (WINDOW_HEIGHT - r_ttoolopt.h - 56 * button_scale - r_colors.h) / button_h;
+#endif
   if (buttons_tall < 5)
   {
     fprintf(stderr,
@@ -948,6 +962,13 @@ static void setup_normal_screen_layout(void)
   gd_toolopt.rows = buttons_tall;
 
   r_canvas.h = r_ttoolopt.h + buttons_tall * button_h;
+#ifdef __IOS__
+  /* Use all the height above the palette, with seven occupied tool rows. */
+  r_canvas.h = WINDOW_HEIGHT - r_colors.h;
+  gd_tools.rows = TOOLBAR_TOOL_COUNT / gd_tools.cols;
+  tool_button_h = (r_canvas.h - r_ttools.h) / gd_tools.rows;
+  r_ttools.h = r_canvas.h - gd_tools.rows * tool_button_h;
+#endif
 
   r_label = r_canvas;
 
@@ -961,14 +982,17 @@ static void setup_normal_screen_layout(void)
   r_sfx.y = r_tuxarea.y;
   r_sfx.w = button_w;           /* Two half-sized buttons across */
   r_sfx.h = button_h >> 1;      /* One half-sized button down */
+#ifdef __IOS__
+  r_sfx.h = 0;                 /* The footer and its sound replay buttons are hidden. */
+#endif
 
   gd_sfx.rows = 1;
   gd_sfx.cols = 2;
 
   r_tools.x = 0;
   r_tools.y = r_ttools.h + r_ttools.y;
-  r_tools.w = gd_tools.cols * button_w;
-  r_tools.h = gd_tools.rows * button_h;
+  r_tools.w = gd_tools.cols * tool_button_w;
+  r_tools.h = gd_tools.rows * tool_button_h;
 
   r_toolopt.w = gd_toolopt.cols * button_w;
   r_toolopt.h = gd_toolopt.rows * button_h;
@@ -1062,10 +1086,6 @@ static SDL_Surface *img_starter = NULL, *img_starter_bkgd = NULL;
 /* This SDL 1.2 <-> 2.0 backward compatibility functions are focused to the main window */
 
 static Uint32 window_format;
-#ifdef __IOS__
-static int ios_recovery_ready;
-static int ios_saving_recovery;
-#endif
 
 #define SDLKey SDL_Keycode
 #define SDLMod SDL_Keymod
@@ -1112,8 +1132,6 @@ static SDL_Surface *SDL_DisplayFormatAlpha(SDL_Surface * surface)
 static void SDL_Flip(SDL_Surface * screen)
 {
 #ifdef __IOS__
-  if (ios_saving_recovery)
-    return;
   apple_apply_safe_area(window_screen, renderer);
 #endif
   //SDL_UpdateWindowSurface(window_screen);
@@ -1127,8 +1145,6 @@ static void SDL_UpdateRect(SDL_Surface * screen, Sint32 x, Sint32 y, Sint32 w, S
 {
   SDL_Rect r;
 #ifdef __IOS__
-  if (ios_saving_recovery)
-    return;
   apple_apply_safe_area(window_screen, renderer);
 #endif
 
@@ -2701,10 +2717,10 @@ static void mainloop(void)
   r_tir.w = 0;
   r_tir.h = 0;
 
-  if (NUM_TOOLS > buttons_tall * gd_tools.cols)
+  if (TOOLBAR_TOOL_COUNT > buttons_tall * gd_tools.cols)
   {
-    real_r_tools.h = r_tools.h - button_h;
-    real_r_tools.y = r_tools.y + button_h / 2;
+    real_r_tools.h = r_tools.h - tool_button_h;
+    real_r_tools.y = r_tools.y + tool_button_h / 2;
   }
 
   do
@@ -2763,7 +2779,7 @@ static void mainloop(void)
           }
         }
       }
-#if defined(AUTOSAVE_GOING_BACKGROUND) && !defined(__IOS__)
+#ifdef AUTOSAVE_GOING_BACKGROUND
       else if (event.type == SDL_APP_DIDENTERBACKGROUND)
       {
         /* Triggers a save to a temporary file in case the app is killed later.
@@ -3603,7 +3619,7 @@ static void mainloop(void)
             magic_switchout(canvas);
             whicht = tool_scroll + GRIDHIT_GD(real_r_tools, gd_tools);
 
-            if (whicht < NUM_TOOLS && tool_avail[whicht] && (valid_click(event.button.button) || whicht == TOOL_PRINT))
+            if (whicht < TOOLBAR_TOOL_COUNT && tool_avail[whicht] && (valid_click(event.button.button) || whicht == TOOL_PRINT))
             {
               /* Allow middle/right-click on "Print", since [Alt]+click
                  on Mac OS X changes it from left click to middle! */
@@ -3640,7 +3656,7 @@ static void mainloop(void)
                   }
                 }
               }
-              update_canvas(0, 0, WINDOW_WIDTH - r_ttoolopt.w, (button_h * buttons_tall) + r_ttools.h);
+              update_canvas(0, 0, canvas->w, canvas->h);
 
               old_tool = cur_tool;
               cur_tool = whicht;
@@ -4044,14 +4060,14 @@ static void mainloop(void)
             if (!done)
               magic_switchin(canvas);
           }
-          else if (((event.button.y < r_tools.y + button_h / 2)
+          else if (((event.button.y < r_tools.y + tool_button_h / 2)
                     && tool_scroll > 0)
                    || ((event.button.y > real_r_tools.y + real_r_tools.h)
-                       && (tool_scroll < NUM_TOOLS - buttons_tall * gd_tools.cols + gd_tools.cols)))
+                       && (tool_scroll < TOOLBAR_TOOL_COUNT - buttons_tall * gd_tools.cols + gd_tools.cols)))
           {
             /* Tool up or down scroll buttons */
 
-            if (event.button.y < r_tools.y + button_h / 2)
+            if (event.button.y < r_tools.y + tool_button_h / 2)
             {
               /* Tool up scroll button */
               tool_scroll -= gd_tools.cols;
@@ -4675,7 +4691,7 @@ static void mainloop(void)
                       {
                         /* Already in label select mode; turn it off */
                         cur_label = LABEL_LABEL;
-                        update_canvas(0, 0, WINDOW_WIDTH - r_ttoolopt.w, (button_h * buttons_tall) + r_ttoolopt.h);
+                        update_canvas(0, 0, canvas->w, canvas->h);
                         if (onscreen_keyboard)
                         {
                           SDL_BlitSurface(kbd->surface, &kbd->rect, screen, &kbd_rect);
@@ -4729,7 +4745,7 @@ static void mainloop(void)
                       {
                         /* Already in label apply mode; turn it off */
                         cur_label = LABEL_LABEL;
-                        update_canvas(0, 0, WINDOW_WIDTH - r_ttoolopt.w, (button_h * buttons_tall) + r_ttoolopt.h);
+                        update_canvas(0, 0, canvas->w, canvas->h);
                         if (onscreen_keyboard)
                         {
                           SDL_BlitSurface(kbd->surface, &kbd->rect, screen, &kbd_rect);
@@ -5779,7 +5795,7 @@ static void mainloop(void)
         {
 
           /* Left tools scroll (via scroll wheel) */
-          if (hit_test(&r_tools, xpos, ypos) && NUM_TOOLS > most + TOOLOFFSET)
+          if (hit_test(&r_tools, xpos, ypos) && TOOLBAR_TOOL_COUNT > most + TOOLOFFSET)
           {
             int is_upper = (event.wheel.y > 0);
 
@@ -5789,14 +5805,14 @@ static void mainloop(void)
               playsound(screen, 1, SND_SCROLL, 1, event.button.x, SNDDIST_NEAR);
               draw_toolbar();
             }
-            else if (!is_upper && tool_scroll < NUM_TOOLS - 12 - TOOLOFFSET)
+            else if (!is_upper && tool_scroll < TOOLBAR_TOOL_COUNT - 12 - TOOLOFFSET)
             {
               tool_scroll += gd_tools.cols;
               playsound(screen, 1, SND_SCROLL, 1, event.button.x, SNDDIST_NEAR);
               draw_toolbar();
             }
 
-            if (event.button.y < r_tools.y + button_h / 2)      // cursor on the upper button
+            if (event.button.y < r_tools.y + tool_button_h / 2)      // cursor on the upper button
             {
               if (tool_scroll == 0)
                 do_setcursor(cursor_arrow);
@@ -5804,16 +5820,16 @@ static void mainloop(void)
                 do_setcursor(cursor_up);
             }
 
-            else if (event.button.y > r_tools.y + r_tools.h - button_h / 2)     // cursor on the lower button
+            else if (event.button.y > r_tools.y + r_tools.h - tool_button_h / 2)     // cursor on the lower button
             {
-              if (tool_scroll < NUM_TOOLS - 12 - TOOLOFFSET)
+              if (tool_scroll < TOOLBAR_TOOL_COUNT - 12 - TOOLOFFSET)
                 do_setcursor(cursor_down);
               else
                 do_setcursor(cursor_arrow);
             }
 
-            else if (tool_avail[((event.button.x - r_tools.x) / button_w) +
-                                ((event.button.y - r_tools.y - button_h / 2) / button_h) * gd_tools.cols + tool_scroll])
+            else if (tool_avail[((event.button.x - r_tools.x) / tool_button_w) +
+                                ((event.button.y - r_tools.y - tool_button_h / 2) / tool_button_h) * gd_tools.cols + tool_scroll])
             {
               do_setcursor(cursor_hand);
             }
@@ -6360,25 +6376,25 @@ static void mainloop(void)
 
           /* Tools: */
 
-          if (NUM_TOOLS > most)
+          if (TOOLBAR_TOOL_COUNT > most)
           {
-            if (event.button.y < r_tools.y + button_h / 2)
+            if (event.button.y < r_tools.y + tool_button_h / 2)
             {
               if (tool_scroll > 0)
                 do_setcursor(cursor_up);
               else
                 do_setcursor(cursor_arrow);
             }
-            else if (event.button.y > r_tools.y + r_tools.h - button_h / 2)
+            else if (event.button.y > r_tools.y + r_tools.h - tool_button_h / 2)
             {
-              if (tool_scroll < NUM_TOOLS - buttons_tall * gd_tools.cols + gd_tools.cols)
+              if (tool_scroll < TOOLBAR_TOOL_COUNT - buttons_tall * gd_tools.cols + gd_tools.cols)
                 do_setcursor(cursor_down);
               else
                 do_setcursor(cursor_arrow);
             }
 
-            else if (tool_avail[((event.button.x - r_tools.x) / button_w) +
-                                ((event.button.y - r_tools.y - button_h / 2) / button_h) * gd_tools.cols + tool_scroll])
+            else if (tool_avail[((event.button.x - r_tools.x) / tool_button_w) +
+                                ((event.button.y - r_tools.y - tool_button_h / 2) / tool_button_h) * gd_tools.cols + tool_scroll])
             {
               do_setcursor(cursor_hand);
             }
@@ -6391,8 +6407,8 @@ static void mainloop(void)
 
           else
           {
-            if (tool_avail[((event.button.x - r_tools.x) / button_w) +
-                           ((event.button.y - r_tools.y) / button_h) * gd_tools.cols])
+            if (tool_avail[((event.button.x - r_tools.x) / tool_button_w) +
+                           ((event.button.y - r_tools.y) / tool_button_h) * gd_tools.cols])
             {
               do_setcursor(cursor_hand);
             }
@@ -9956,6 +9972,42 @@ static SDL_Surface *do_loadimage(const char *const fname, int abort_on_error)
 /* Draw the toolbar: */
 static void draw_toolbar(void)
 {
+#ifdef __IOS__
+  SDL_Rect dest;
+
+  draw_image_title(TITLE_TOOLS, r_ttools);
+  for (int tool = 0; tool < TOOLBAR_TOOL_COUNT; tool++)
+  {
+    SDL_Surface *body = tool == cur_tool ? img_btn_down :
+      (tool_avail[tool] ? img_btn_up : img_btn_off);
+    SDL_Surface *tint = tool == cur_tool || tool_avail[tool] ? img_black : img_grey;
+    int x = (tool % gd_tools.cols) * tool_button_w;
+    int y = r_tools.y + (tool / gd_tools.cols) * tool_button_h;
+    int inset = max(2, tool_button_w / 12);
+
+    dest = (SDL_Rect){x, y, tool_button_w, tool_button_h};
+    SDL_BlitScaled(body, NULL, screen, &dest);
+    SDL_BlitSurface(tint, NULL, img_tools[tool], NULL);
+    SDL_BlitSurface(tint, NULL, img_tool_names[tool], NULL);
+
+    /* Keep the icon's aspect ratio, and leave room for its label. */
+    int icon_w = img_tools[tool]->w * tool_button_w / button_w;
+    int icon_h = img_tools[tool]->h * tool_button_w / button_w;
+    int available_h = tool_button_h - img_tool_names[tool]->h - 3 * inset;
+    if (icon_h > available_h)
+    {
+      icon_w = icon_w * available_h / icon_h;
+      icon_h = available_h;
+    }
+    dest = (SDL_Rect){x + (tool_button_w - icon_w) / 2,
+      y + inset + (available_h - icon_h) / 2, icon_w, icon_h};
+    SDL_BlitScaled(img_tools[tool], NULL, screen, &dest);
+
+    dest.x = x + (tool_button_w - img_tool_names[tool]->w) / 2;
+    dest.y = y + tool_button_h - img_tool_names[tool]->h - inset;
+    SDL_BlitSurface(img_tool_names[tool], NULL, screen, &dest);
+  }
+#else
   int i, off_y, max, most, tool;
   SDL_Rect dest;
 
@@ -9969,7 +10021,7 @@ static void draw_toolbar(void)
 
 
   /* Do we need scrollbars? */
-  if (NUM_TOOLS > most + TOOLOFFSET)
+  if (TOOLBAR_TOOL_COUNT > most + TOOLOFFSET)
   {
     off_y = img_scroll_up->h;
     max = most - gd_tools.cols + TOOLOFFSET;
@@ -9992,7 +10044,7 @@ static void draw_toolbar(void)
 
 
 
-    if (tool_scroll < NUM_TOOLS - (most - gd_tools.cols) - TOOLOFFSET)
+    if (tool_scroll < TOOLBAR_TOOL_COUNT - (most - gd_tools.cols) - TOOLOFFSET)
     {
       SDL_BlitSurface(img_scroll_down, NULL, screen, &dest);
     }
@@ -10065,6 +10117,7 @@ static void draw_toolbar(void)
       SDL_BlitSurface(img_btn_off, NULL, screen, &dest);
     }
   }
+#endif
 }
 
 
@@ -10381,7 +10434,12 @@ static unsigned draw_colors(unsigned action)
 
   if (colors_state == COLORSEL_ENABLE)
   {
+#ifdef __IOS__
+    dest = r_tcolors;
+    SDL_BlitScaled(img_title_large_on, NULL, screen, &dest);
+#else
     SDL_BlitSurface(img_title_large_on, NULL, screen, &r_tcolors);
+#endif
 
     dest.x = r_tcolors.x + (r_tcolors.w - img_title_names[TITLE_COLORS]->w) / 2;
     dest.y = r_tcolors.y + (r_tcolors.h - img_title_names[TITLE_COLORS]->h) / 2;
@@ -10389,7 +10447,12 @@ static unsigned draw_colors(unsigned action)
   }
   else
   {
+#ifdef __IOS__
+    dest = r_tcolors;
+    SDL_BlitScaled(img_title_large_off, NULL, screen, &dest);
+#else
     SDL_BlitSurface(img_title_large_off, NULL, screen, &r_tcolors);
+#endif
   }
 
   update_screen_rect(&r_tcolors);
@@ -12801,6 +12864,11 @@ static void draw_tux_text_ex(int which_tux, const char *const str, int want_righ
   /* Remove any text-changing timer if one is running: */
   control_drawtext_timer(0, "", 0);
 
+#ifdef __IOS__
+  /* iPhone/iPad use the footer's space for the canvas and larger tools. */
+  return;
+#endif
+
   /* Clear first: */
   SDL_FillRect(screen, &r_tuxarea, SDL_MapRGB(screen->format, 255, 255, 255));
 
@@ -14755,8 +14823,8 @@ static void load_current(void)
     file_id[strlen(file_id)] = '\0';
     found_autosaved = 1;
     fclose(fi);
+    free(fname);
   }
-  free(fname);
 #endif
 
   if (!found_autosaved)
@@ -14833,12 +14901,10 @@ static void load_current(void)
   {
     /* Set file_id to the draw that were edited when the autosave triggered */
     determine_id();
-#ifndef __IOS__
     snprintf(ftmp, sizeof(ftmp), "saved/%s%s", AUTOSAVED_NAME, FNAME_EXTENSION);
     fname = get_fname(ftmp, DIR_SAVE);
     unlink(fname);
     free(fname);
-#endif
 
     /* The autosaved file comes from work that was not explicitely saved */
     been_saved = 0;
@@ -16186,7 +16252,7 @@ static void do_shape(int sx, int sy, int nx, int ny, int rotn, int use_brush)
       }
 
       if (xx % 10 == 0)
-        update_canvas(0, 0, WINDOW_WIDTH - r_ttoolopt.w, (button_h * 7) + 40 + HEIGHTOFFSET);
+        update_canvas(0, 0, canvas->w, canvas->h);
     }
   }
 
@@ -16305,7 +16371,7 @@ static int do_save(int tool, int dont_show_success_results, int autosave)
   if (disable_save && !autosave)
     return 0;
 
-  scroll = (NUM_TOOLS > buttons_tall * gd_tools.cols) ? img_scroll_down->h : 0;
+  scroll = (TOOLBAR_TOOL_COUNT > buttons_tall * gd_tools.cols) ? img_scroll_down->h : 0;
   tmp_apply_uncommited_text();
 
   SDL_BlitSurface(canvas, NULL, save_canvas, NULL);
@@ -16333,9 +16399,9 @@ static int do_save(int tool, int dont_show_success_results, int autosave)
                               PROMPT_SAVE_OVER_YES,
                               PROMPT_SAVE_OVER_NO,
                               img_save_over, NULL, NULL, SND_AREYOUSURE,
-                              (TOOL_SAVE % 2) * button_w + button_w / 2,
-                              (TOOL_SAVE / 2) * button_h + r_ttools.h +
-                              button_h / 2 - tool_scroll * button_h / gd_tools.cols + scroll) == 0)
+                              (TOOL_SAVE % 2) * tool_button_w + tool_button_w / 2,
+                              (TOOL_SAVE / 2) * tool_button_h + r_ttools.h +
+                              tool_button_h / 2 - tool_scroll * tool_button_h / gd_tools.cols + scroll) == 0)
       {
         /* No - Let's save a new picture! */
 
@@ -16422,7 +16488,7 @@ static int do_save(int tool, int dont_show_success_results, int autosave)
   /* Save the file: */
 
   if (autosave)
-    snprintf(tmp, sizeof(tmp), "saved/AUTOSAVED.tmp");
+    snprintf(tmp, sizeof(tmp), "saved/AUTOSAVED%s", FNAME_EXTENSION);
   else
     snprintf(tmp, sizeof(tmp), "saved/%s%s", file_id, FNAME_EXTENSION);
   fname = get_fname(tmp, DIR_SAVE);
@@ -16436,36 +16502,22 @@ static int do_save(int tool, int dont_show_success_results, int autosave)
             "%s\n" "The system error that occurred was:\n" "%s\n\n", fname, strerror(errno));
 
     draw_tux_text(TUX_OOPS, strerror(errno), 0);
-    free(fname);
-    undo_tmp_applied_text();
-    return 0;
   }
   else
   {
     if (!do_png_save(fi, fname, save_canvas, 1))
     {
       free(fname);
-      undo_tmp_applied_text();
       return 0;
     }
   }
 
-  if (autosave)
-  {
-    char *recovery_fname;
-    int saved;
-
-    snprintf(tmp, sizeof(tmp), "saved/AUTOSAVED%s", FNAME_EXTENSION);
-    recovery_fname = get_fname(tmp, DIR_SAVE);
-    saved = (rename(fname, recovery_fname) == 0);
-    if (!saved)
-      fprintf(stderr, "Cannot replace recovery drawing: %s\n", strerror(errno));
-    free(recovery_fname);
-    free(fname);
-    undo_tmp_applied_text();
-    return saved;
-  }
   free(fname);
+
+
+  if (autosave)
+    /* No more process needed */
+    return 1;
 
   show_progress_bar(screen);
 
@@ -16543,14 +16595,6 @@ static int do_save(int tool, int dont_show_success_results, int autosave)
 
   undo_tmp_applied_text();
 
-#ifdef __IOS__
-  /* A successful explicit Save becomes the relaunch target. */
-  save_current();
-  snprintf(tmp, sizeof(tmp), "saved/AUTOSAVED%s", FNAME_EXTENSION);
-  fname = get_fname(tmp, DIR_SAVE);
-  unlink(fname);
-  free(fname);
-#endif
   return 1;
 }
 
@@ -17119,7 +17163,9 @@ static int do_png_save(FILE * fi, const char *const fname, SDL_Surface * surf, i
 
         png_write_end(png_ptr, NULL);
         png_destroy_write_struct(&png_ptr, &info_ptr);
-        return (fclose(fi) == 0);
+        fclose(fi);
+
+        return 1;
       }
     }
   }
@@ -17155,12 +17201,12 @@ static int do_quit(int tool)
 
   if (!no_prompt_on_quit)
   {
-    scroll = (NUM_TOOLS > buttons_tall * gd_tools.cols) ? img_scroll_down->h : 0;
+    scroll = (TOOLBAR_TOOL_COUNT > buttons_tall * gd_tools.cols) ? img_scroll_down->h : 0;
     done =
       do_prompt_snd(PROMPT_QUIT_TXT, PROMPT_QUIT_YES, PROMPT_QUIT_NO,
-                    SND_AREYOUSURE, (TOOL_QUIT % 2) * button_w + button_w / 2,
-                    (TOOL_QUIT / 2) * button_h + r_ttools.h + button_h / 2 -
-                    tool_scroll * button_h / gd_tools.cols + scroll);
+                    SND_AREYOUSURE, (TOOL_QUIT % 2) * tool_button_w + tool_button_w / 2,
+                    (TOOL_QUIT / 2) * tool_button_h + r_ttools.h + tool_button_h / 2 -
+                    tool_scroll * tool_button_h / gd_tools.cols + scroll);
   }
   else
   {
@@ -17561,8 +17607,8 @@ static int do_open(void)
     {
       do_prompt_snd(PROMPT_OPEN_NOFILES_TXT, PROMPT_OPEN_NOFILES_YES, "",
                     SND_YOUCANNOT,
-                    (TOOL_OPEN % 2) * button_w + button_w / 2,
-                    (TOOL_OPEN / 2) * button_h + r_ttools.h + button_h / 2 - tool_scroll * button_h / gd_tools.cols);
+                    (TOOL_OPEN % 2) * tool_button_w + tool_button_w / 2,
+                    (TOOL_OPEN / 2) * tool_button_h + r_ttools.h + tool_button_h / 2 - tool_scroll * tool_button_h / gd_tools.cols);
     }
     else
     {
@@ -18489,7 +18535,7 @@ static int do_open(void)
       }
 
 
-      update_canvas(0, 0, WINDOW_WIDTH - r_ttoolopt.w - r_ttools.w, button_h * buttons_tall + r_ttools.h);
+      update_canvas(0, 0, canvas->w, canvas->h);
 
       free(instructions);
     }
@@ -20117,7 +20163,7 @@ static void print_image(void)
   int cur_time, scroll;
 
   cur_time = SDL_GetTicks() / 1000;
-  scroll = (NUM_TOOLS > buttons_tall * gd_tools.cols) ? img_scroll_down->h : 0;
+  scroll = (TOOLBAR_TOOL_COUNT > buttons_tall * gd_tools.cols) ? img_scroll_down->h : 0;
 
   DEBUG_PRINTF("Current time = %d\n", cur_time);
 
@@ -20134,9 +20180,9 @@ static void print_image(void)
                             PROMPT_PRINT_NOW_YES,
                             PROMPT_PRINT_NOW_NO,
                             img_printer, NULL, NULL, SND_AREYOUSURE,
-                            (TOOL_PRINT % 2) * button_w + button_w / 2,
-                            (TOOL_PRINT / 2) * button_h + r_ttools.h +
-                            button_h / 2 - tool_scroll * button_h / gd_tools.cols + scroll))
+                            (TOOL_PRINT % 2) * tool_button_w + tool_button_w / 2,
+                            (TOOL_PRINT / 2) * tool_button_h + r_ttools.h +
+                            tool_button_h / 2 - tool_scroll * tool_button_h / gd_tools.cols + scroll))
     {
       do_print();
 
@@ -20777,7 +20823,12 @@ static int charsize(Uint16 c)
  */
 static void draw_image_title(int t, SDL_Rect dest)
 {
+#ifdef __IOS__
+  SDL_Rect background = dest;
+  SDL_BlitScaled(img_title_on, NULL, screen, &background);
+#else
   SDL_BlitSurface(img_title_on, NULL, screen, &dest);
+#endif
 
   dest.x += (dest.w - img_title_names[t]->w) / 2;
   dest.y += (dest.h - img_title_names[t]->h) / 2;
@@ -20988,11 +21039,11 @@ static void handle_keymouse_buttons(SDLKey key, int *whicht, int *whichc, SDL_Re
     if (key == SDLK_F7 && hit_test(&real_r_tools, oldpos_x, oldpos_y))
     {
       *whicht += 2;
-      *whicht = *whicht % NUM_TOOLS;
+      *whicht = *whicht % TOOLBAR_TOOL_COUNT;
       while (!tool_avail[*whicht])
       {
         *whicht += 2;
-        *whicht = *whicht % NUM_TOOLS;
+        *whicht = *whicht % TOOLBAR_TOOL_COUNT;
       }
     }
 
@@ -21000,23 +21051,23 @@ static void handle_keymouse_buttons(SDLKey key, int *whicht, int *whichc, SDL_Re
     {
       *whicht -= 2;
       if (*whicht < 0)
-        *whicht += NUM_TOOLS;
+        *whicht += TOOLBAR_TOOL_COUNT;
       while (!tool_avail[*whicht])
       {
         *whicht -= 2;
         if (*whicht < 0)
-          *whicht += NUM_TOOLS;
+          *whicht += TOOLBAR_TOOL_COUNT;
       }
     }
 
     else if (key == SDLK_F12 && hit_test(&real_r_tools, oldpos_x, oldpos_y))
     {
       *whicht = *whicht + 1;
-      *whicht = *whicht % NUM_TOOLS;
+      *whicht = *whicht % TOOLBAR_TOOL_COUNT;
       while (!tool_avail[*whicht])
       {
         *whicht += 1;
-        *whicht = *whicht % NUM_TOOLS;
+        *whicht = *whicht % TOOLBAR_TOOL_COUNT;
       }
     }
 
@@ -21025,16 +21076,16 @@ static void handle_keymouse_buttons(SDLKey key, int *whicht, int *whichc, SDL_Re
       *whicht = tool_scroll + grid_hit_gd(&real_r_tools, oldpos_x, oldpos_y, &gd_tools);
       *whicht = *whicht - 1;
       if (*whicht < 0)
-        *whicht += NUM_TOOLS;
+        *whicht += TOOLBAR_TOOL_COUNT;
       while (!tool_avail[*whicht])
       {
         *whicht -= 1;
         if (*whicht < 0)
-          *whicht += NUM_TOOLS;
+          *whicht += TOOLBAR_TOOL_COUNT;
       }
     }
 
-    while (*whicht >= tool_scroll + 2 * real_r_tools.h / button_h)
+    while (*whicht >= tool_scroll + 2 * real_r_tools.h / tool_button_h)
     {
       tool_scroll += 2;
       draw_toolbar();
@@ -21047,9 +21098,9 @@ static void handle_keymouse_buttons(SDLKey key, int *whicht, int *whichc, SDL_Re
       update_screen_rect(&r_tools);
     }
 
-    SDL_WarpMouse(button_w / 2 + *whicht % 2 * button_w,
-                  real_r_tools.y - *whicht % 2 * button_w / 2 +
-                  *whicht * button_h / 2 + 10 - tool_scroll * button_h / 2);
+    SDL_WarpMouse(tool_button_w / 2 + *whicht % 2 * tool_button_w,
+                  real_r_tools.y - *whicht % 2 * tool_button_h / 2 +
+                  *whicht * tool_button_h / 2 + 10 - tool_scroll * tool_button_h / 2);
   }
 
   else if (key == SDLK_F11 && hit_test(&r_colors, oldpos_x, oldpos_y))
@@ -21058,7 +21109,7 @@ static void handle_keymouse_buttons(SDLKey key, int *whicht, int *whichc, SDL_Re
     *whichc = *whichc - 1;
     if (*whichc < 0)
       *whichc += NUM_COLORS;
-    SDL_WarpMouse(button_w * 2 + *whichc * color_button_w + 12, r_canvas.h + (r_colors.h / 2));
+    SDL_WarpMouse(r_colors.x + *whichc * color_button_w + 12, r_canvas.h + (r_colors.h / 2));
   }
 
   else if (key == SDLK_F12 && hit_test(&r_colors, oldpos_x, oldpos_y))
@@ -21066,19 +21117,19 @@ static void handle_keymouse_buttons(SDLKey key, int *whicht, int *whichc, SDL_Re
     *whichc = grid_hit_gd(&r_colors, oldpos_x, oldpos_y, &gd_colors);
     *whichc = *whichc + 1;
     *whichc = *whichc % NUM_COLORS;
-    SDL_WarpMouse(button_w * 2 + *whichc * color_button_w + 12, r_canvas.h + (r_colors.h / 2));
+    SDL_WarpMouse(r_colors.x + *whichc * color_button_w + 12, r_canvas.h + (r_colors.h / 2));
   }
 
   else if (key == SDLK_F4)
   {
     if (hit_test(&r_tools, oldpos_x, oldpos_y))
-      SDL_WarpMouse(button_w * 2 + *whichc * color_button_w + 12, r_canvas.h + (r_colors.h / 2));
+      SDL_WarpMouse(r_colors.x + *whichc * color_button_w + 12, r_canvas.h + (r_colors.h / 2));
     else if (hit_test(&r_colors, oldpos_x, oldpos_y))
       SDL_WarpMouse(WINDOW_WIDTH / 2, WINDOW_HEIGHT / 2);
     else
-      SDL_WarpMouse(button_w / 2 + *whicht % 2 * button_w,
-                    real_r_tools.y - *whicht % 2 * button_w / 2 +
-                    *whicht * button_h / 2 + 10 - tool_scroll * button_h / 2);
+      SDL_WarpMouse(tool_button_w / 2 + *whicht % 2 * tool_button_w,
+                    real_r_tools.y - *whicht % 2 * tool_button_h / 2 +
+                    *whicht * tool_button_h / 2 + 10 - tool_scroll * tool_button_h / 2);
 
     /* Play a sound here as there is a big jump */
     playsound(screen, 1, SND_CLICK, 0, SNDPOS_LEFT, SNDDIST_NEAR);
@@ -24150,7 +24201,7 @@ static int do_new_dialog(void)
     }
   }
 
-  update_canvas(0, 0, WINDOW_WIDTH - r_ttoolopt.w - r_ttools.w, button_h * buttons_tall + r_ttools.h);
+  update_canvas(0, 0, canvas->w, canvas->h);
 
 
   /* Clean up: */
@@ -29782,20 +29833,6 @@ int TP_EventFilter( __attribute__((unused))
  * FIXME
  */
 {
-#ifdef __IOS__
-  /* iOS can suspend us before the main loop next polls its event queue. */
-  if (event->type == SDL_APP_WILLENTERBACKGROUND || event->type == SDL_APP_TERMINATING)
-  {
-    if (ios_recovery_ready && !ios_saving_recovery)
-    {
-      ios_saving_recovery = 1;
-      if (do_save(cur_tool, 1, 1))
-        save_current();
-      ios_saving_recovery = 0;
-    }
-    return 0;
-  }
-#endif
   if (event->type == SDL_QUIT ||
       event->type == SDL_WINDOWEVENT ||
 #ifndef __IPHONEOS__
@@ -31217,7 +31254,7 @@ static void claim_to_be_ready(void)
   draw_toolbar();
   draw_colors(COLORSEL_FORCE_REDRAW);
   draw_brushes();
-  update_canvas(0, 0, WINDOW_WIDTH - r_ttoolopt.w, (48 * 7) + 40 + HEIGHTOFFSET);
+  update_canvas(0, 0, canvas->w, canvas->h);
 
   SDL_Flip(screen);
 
@@ -31327,45 +31364,6 @@ int main(int argc, char *argv[])
 
   /* Set up! */
   setup();
-#ifdef __IOS__
-  ios_recovery_ready = 1;
-#if TARGET_OS_SIMULATOR
-  /* CI-only fixture: exercise the real lifecycle save and startup restore. */
-  const char *recovery_test = SDL_getenv("TUXPAINT_TEST_RECOVERY");
-  if (recovery_test && *recovery_test)
-  {
-    char *test_result;
-    FILE *test_file;
-    SDL_Rect mark = {20, 20, 80, 80};
-    Uint32 marker = SDL_MapRGB(canvas->format, 231, 37, 149);
-    if (strcmp(recovery_test, "seed") == 0)
-    {
-      SDL_FillRect(canvas, &mark, marker);
-      been_saved = 0;
-      update_canvas(0, 0, canvas->w, canvas->h);
-      test_result = get_fname("recovery-seeded.txt", DIR_SAVE);
-    }
-    else
-    {
-      Uint8 test_r, test_g, test_b;
-      SDL_GetRGB(getpixels[canvas->format->BytesPerPixel](canvas, 40, 40),
-                 canvas->format, &test_r, &test_g, &test_b);
-      if (test_r != 231 || test_g != 37 || test_b != 149)
-      {
-        fprintf(stderr, "Recovery test: drawing did not survive relaunch\n");
-        return 2;
-      }
-      test_result = get_fname("recovery-verified.txt", DIR_SAVE);
-    }
-    test_file = fopen(test_result, "w");
-    if (!test_file)
-      return 3;
-    fprintf(test_file, "PASS\n");
-    fclose(test_file);
-    free(test_result);
-  }
-#endif
-#endif
 #ifdef DEBUG
   DEBUG_PRINTF("Seconds in early start-up: %.3f\n", (double)(time2 - time1) / CLOCK_SPEED);
   DEBUG_PRINTF("Seconds in late start-up:  %.3f\n", (double)(time2 - time1) / CLOCK_SPEED);
@@ -31388,9 +31386,6 @@ int main(int argc, char *argv[])
   mainloop();
 
   /* Close and quit! */
-#ifdef __IOS__
-  ios_recovery_ready = 0;
-#endif
   save_current();
   wait_for_sfx();
   cleanup();
@@ -31830,63 +31825,63 @@ static void handle_joybuttonupdownscl(SDL_Event event, int oldpos_x, int oldpos_
     {
       if (event.button.button == joystick_button_selectbrushtool)
       {
-        ev.button.x = (TOOL_BRUSH % 2) * button_w + button_w / 2;
-        ev.button.y = real_r_tools.y + TOOL_BRUSH / 2 * button_h + button_h / 2;
+        ev.button.x = (TOOL_BRUSH % 2) * tool_button_w + tool_button_w / 2;
+        ev.button.y = real_r_tools.y + TOOL_BRUSH / 2 * tool_button_h + tool_button_h / 2;
       }
 
       else if (event.button.button == joystick_button_selectstamptool)
       {
-        ev.button.x = (TOOL_STAMP % 2) * button_w + button_w / 2;
-        ev.button.y = real_r_tools.y + TOOL_STAMP / 2 * button_h + button_h / 2;
+        ev.button.x = (TOOL_STAMP % 2) * tool_button_w + tool_button_w / 2;
+        ev.button.y = real_r_tools.y + TOOL_STAMP / 2 * tool_button_h + tool_button_h / 2;
       }
 
       else if (event.button.button == joystick_button_selectlinestool)
       {
-        ev.button.x = (TOOL_LINES % 2) * button_w + button_w / 2;
-        ev.button.y = real_r_tools.y + TOOL_LINES / 2 * button_h + button_h / 2;
+        ev.button.x = (TOOL_LINES % 2) * tool_button_w + tool_button_w / 2;
+        ev.button.y = real_r_tools.y + TOOL_LINES / 2 * tool_button_h + tool_button_h / 2;
       }
 
       else if (event.button.button == joystick_button_selectshapestool)
       {
-        ev.button.x = (TOOL_SHAPES % 2) * button_w + button_w / 2;
-        ev.button.y = real_r_tools.y + TOOL_SHAPES / 2 * button_h + button_h / 2;
+        ev.button.x = (TOOL_SHAPES % 2) * tool_button_w + tool_button_w / 2;
+        ev.button.y = real_r_tools.y + TOOL_SHAPES / 2 * tool_button_h + tool_button_h / 2;
       }
 
       else if (event.button.button == joystick_button_selecttexttool)
       {
-        ev.button.x = (TOOL_TEXT % 2) * button_w + button_w / 2;
-        ev.button.y = real_r_tools.y + TOOL_TEXT / 2 * button_h + button_h / 2;
+        ev.button.x = (TOOL_TEXT % 2) * tool_button_w + tool_button_w / 2;
+        ev.button.y = real_r_tools.y + TOOL_TEXT / 2 * tool_button_h + tool_button_h / 2;
       }
 
       else if (event.button.button == joystick_button_selectlabeltool)
       {
-        ev.button.x = (TOOL_LABEL % 2) * button_w + button_w / 2;
-        ev.button.y = real_r_tools.y + TOOL_LABEL / 2 * button_h + button_h / 2;
+        ev.button.x = (TOOL_LABEL % 2) * tool_button_w + tool_button_w / 2;
+        ev.button.y = real_r_tools.y + TOOL_LABEL / 2 * tool_button_h + tool_button_h / 2;
       }
 
       else if (event.button.button == joystick_button_selectfilltool)
       {
-        ev.button.x = (TOOL_FILL % 2) * button_w + button_w / 2;
-        ev.button.y = real_r_tools.y + TOOL_FILL / 2 * button_h + button_h / 2;
+        ev.button.x = (TOOL_FILL % 2) * tool_button_w + tool_button_w / 2;
+        ev.button.y = real_r_tools.y + TOOL_FILL / 2 * tool_button_h + tool_button_h / 2;
       }
 
       else if (event.button.button == joystick_button_selectmagictool)
       {
-        ev.button.x = (TOOL_MAGIC % 2) * button_w + button_w / 2;
-        ev.button.y = real_r_tools.y + TOOL_MAGIC / 2 * button_h + button_h / 2;
+        ev.button.x = (TOOL_MAGIC % 2) * tool_button_w + tool_button_w / 2;
+        ev.button.y = real_r_tools.y + TOOL_MAGIC / 2 * tool_button_h + tool_button_h / 2;
       }
 
       else if (event.button.button == joystick_button_selecterasertool)
       {
-        ev.button.x = (TOOL_ERASER % 2) * button_w + button_w / 2;
-        ev.button.y = real_r_tools.y + TOOL_ERASER / 2 * button_h + button_h / 2;
+        ev.button.x = (TOOL_ERASER % 2) * tool_button_w + tool_button_w / 2;
+        ev.button.y = real_r_tools.y + TOOL_ERASER / 2 * tool_button_h + tool_button_h / 2;
       }
 
       /* Deal with scroll to reveal the button that should be clicked */
       eby = ev.button.y;
       ts = tool_scroll;
 
-      while (eby < real_r_tools.y + ts / 2 * button_h)
+      while (eby < real_r_tools.y + ts / 2 * tool_button_h)
       {
         ev.button.y = real_r_tools.y - 1;
         SDL_PushEvent(&ev);
@@ -31894,14 +31889,14 @@ static void handle_joybuttonupdownscl(SDL_Event event, int oldpos_x, int oldpos_
       }
 
       /* We don't need this ATM, but better left it ready in case the number of tools grows enough */
-      while (eby > real_r_tools.y + real_r_tools.h + ts / 2 * button_h)
+      while (eby > real_r_tools.y + real_r_tools.h + ts / 2 * tool_button_h)
       {
         ev.button.y = real_r_tools.y + real_r_tools.h + 1;
         SDL_PushEvent(&ev);
         ts += 2;
       }
 
-      ev.button.y = eby - ts / 2 * button_h;
+      ev.button.y = eby - ts / 2 * tool_button_h;
     }
   }
   else
@@ -33122,4 +33117,3 @@ void maybe_redraw_eraser_xor(void)
     }
   }
 }
-

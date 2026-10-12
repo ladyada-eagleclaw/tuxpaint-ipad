@@ -12,11 +12,9 @@ shapes, sounds, and magic tools.
   iPad mini, and iPad Pro. Use it in landscape orientation.
 - Controls scale with the canvas. Rendering and touch coordinates account for
   the iPhone notch, Dynamic Island, and home-indicator safe area.
+- The iOS layout omits the Tux message footer and uses seven filled rows of
+  larger left-hand tool buttons.
 - Drawings are stored in the app sandbox; Photos export requests add-only access.
-- **Save** keeps a drawing in the app's gallery; **Open** restores it later.
-  Going to the Home screen or another app also saves a recovery copy of the
-  current canvas, which reopens after a relaunch. Recovery stays on this device;
-  it is not cloud sync or a backup after uninstalling the app.
 - No ads, in-app purchases, account sign-in, or printing.
 - SVG stamps are not supported by this inherited port. PNG stamps are bundled.
 - This remains a beta. Simulator startup checks do not replace testing drawing,
@@ -43,9 +41,6 @@ the simulator app on an iPad Pro 12.9-inch (5th generation), iPad mini
 (6th generation), and iPhone 16. It captures startup screenshots and logs,
 checks that the app stays running, and publishes unsigned ZIP artifacts for
 seven days. The workflow name reflects the project's original iPad target.
-On the iPad Pro simulator, it also seeds a marked canvas, backgrounds and
-terminates the app, then checks the restored pixels after relaunch. This fixture
-is compiled only for simulators and requires an explicit test environment value.
 
 ## Build locally on a Mac
 
