@@ -54,10 +54,14 @@ jobs:
           xcrun simctl bootstatus "$device" -b
           app=$(find build-ipad -maxdepth 3 -name TuxPaint.app -type d | head -1)
           xcrun simctl install "$device" "$app"
-          xcrun simctl launch "$device" org.ladyada.tuxpaint.ipad
+          launch_result=$(xcrun simctl launch --stdout="$PWD/artifacts/app-stdout.txt" --stderr="$PWD/artifacts/app-stderr.txt" "$device" org.ladyada.tuxpaint.ipad)
+          echo "$launch_result"
+          app_pid=${launch_result##*: }
           sleep 15
-          xcrun simctl spawn "$device" launchctl list | grep org.ladyada.tuxpaint.ipad
           xcrun simctl io "$device" screenshot artifacts/ipad-launch.png
+          cat artifacts/app-stdout.txt artifacts/app-stderr.txt
+          find "$HOME/Library/Logs/DiagnosticReports" -name 'TuxPaint*' -exec cp {} artifacts/ \;
+          ps -p "$app_pid" -o comm= | grep '/TuxPaint.app/TuxPaint$'
       - uses: actions/upload-artifact@v4
         if: always()
         with:
