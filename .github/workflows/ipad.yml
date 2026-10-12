@@ -56,10 +56,41 @@ jobs:
             xcrun simctl boot "$device"
             xcrun simctl bootstatus "$device" -b
             xcrun simctl install "$device" "$app"
-            launch_result=$(xcrun simctl launch --stdout="$PWD/artifacts/$model/app-stdout.txt" --stderr="$PWD/artifacts/$model/app-stderr.txt" "$device" org.ladyada.tuxpaint.ipad)
+            recovery_mode=""
+            if [[ "$model" == 'iPad Pro (12.9-inch) (5th generation)' ]]; then
+              recovery_mode=seed
+            fi
+            launch_result=$(SIMCTL_CHILD_TUXPAINT_TEST_RECOVERY="$recovery_mode" xcrun simctl launch --stdout="$PWD/artifacts/$model/app-stdout.txt" --stderr="$PWD/artifacts/$model/app-stderr.txt" "$device" org.ladyada.tuxpaint.ipad)
             echo "$model: $launch_result"
             app_pid=${launch_result##*: }
             sleep 15
+            if [[ "$recovery_mode" == seed ]]; then
+              container=$(xcrun simctl get_app_container "$device" org.ladyada.tuxpaint.ipad data)
+              drawings="$container/Library/Application Support/TuxPaint"
+              for attempt in {1..45}; do
+                [[ -f "$drawings/recovery-seeded.txt" ]] && break
+                sleep 1
+              done
+              test -f "$drawings/recovery-seeded.txt"
+              # A real UIKit transition, followed by process termination/relaunch.
+              xcrun simctl launch "$device" com.apple.Preferences
+              for attempt in {1..15}; do
+                [[ -s "$drawings/saved/AUTOSAVED.png" ]] && break
+                sleep 1
+              done
+              test -s "$drawings/saved/AUTOSAVED.png"
+              cp "$drawings/saved/AUTOSAVED.png" "artifacts/$model/recovery.png"
+              xcrun simctl terminate "$device" org.ladyada.tuxpaint.ipad
+              launch_result=$(SIMCTL_CHILD_TUXPAINT_TEST_RECOVERY=verify xcrun simctl launch --stdout="$PWD/artifacts/$model/restore-stdout.txt" --stderr="$PWD/artifacts/$model/restore-stderr.txt" "$device" org.ladyada.tuxpaint.ipad)
+              app_pid=${launch_result##*: }
+              for attempt in {1..45}; do
+                [[ -f "$drawings/recovery-verified.txt" ]] && break
+                sleep 1
+              done
+              test -f "$drawings/recovery-verified.txt"
+              cp "$drawings/recovery-verified.txt" "artifacts/$model/"
+              echo 'PASS: drawing survived background, termination, and relaunch.'
+            fi
             xcrun simctl io "$device" screenshot "artifacts/$model/launch.png"
             cat "artifacts/$model/app-stdout.txt" "artifacts/$model/app-stderr.txt"
             find "$HOME/Library/Logs/DiagnosticReports" -name 'TuxPaint*' -exec cp {} "artifacts/$model/" \;
