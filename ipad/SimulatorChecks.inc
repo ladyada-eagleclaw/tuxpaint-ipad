@@ -89,6 +89,17 @@ static void ios_simulator_checks(void)
   {
     ios_test_require(!ios_test_white(painted_x, painted_y), "Touch paints at the inverse-mapped canvas position");
     ios_test_require(ios_test_white(canvas->w * 0.3f, canvas->h * 0.3f), "Zoomed touch does not paint at the untransformed position");
+    float sx = r_canvas.x + painted_x, sy = r_canvas.y + painted_y;
+    tp_view_to_screen(&ios_view, &sx, &sy);
+    int wx, wy, ww, wh;
+    SDL_RenderLogicalToWindow(renderer, sx, sy, &wx, &wy);
+    SDL_GetWindowSize(window_screen, &ww, &wh);
+    char *sample_path = get_fname("zoom-sample.txt", DIR_SAVE);
+    FILE *sample = fopen(sample_path, "w");
+    ios_test_require(sample != NULL, "Write visible-pixel checkpoint");
+    fprintf(sample, "%d %d %d %d\n", wx, wy, ww, wh);
+    fclose(sample);
+    free(sample_path);
     char *ready = get_fname("zoom-ready.txt", DIR_SAVE);
     FILE *marker = fopen(ready, "w");
     ios_test_require(marker != NULL, "Notify simulator screenshot checkpoint");

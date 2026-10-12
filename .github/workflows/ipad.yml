@@ -7,7 +7,7 @@ on:
       devices:
         description: Simulator coverage
         type: choice
-        options: [all, pro]
+        options: [all, pro, phone]
         default: all
 permissions:
   contents: read
@@ -47,6 +47,7 @@ jobs:
         run: |
           cc -std=c11 -Wall -Wextra -Werror ipad/CanvasView.c ipad/tests/canvas_view_test.c -lm -o "$RUNNER_TEMP/canvas-view-test"
           "$RUNNER_TEMP/canvas-view-test"
+          python3 -m pip install --user --break-system-packages pillow
       - name: Compile
         run: cmake --build build-ipad --config Release --target TuxPaint --parallel 3
       - name: Package unsigned app
@@ -60,7 +61,10 @@ jobs:
         run: |
           runtime=$(xcrun simctl list runtimes -j | python3 -c 'import json,sys; rs=json.load(sys.stdin)["runtimes"]; print(next(r["identifier"] for r in reversed(rs) if r["isAvailable"] and "iOS" in r["name"]))')
           app=$(find build-ipad -maxdepth 3 -name TuxPaint.app -type d | head -1)
-          for model in 'iPad Pro (12.9-inch) (5th generation)' 'iPad mini (6th generation)' 'iPhone 16'; do
+          for model in 'iPhone 16' 'iPad mini (6th generation)' 'iPad Pro (12.9-inch) (5th generation)'; do
+            if [[ '${{ inputs.devices }}' == phone && "$model" != 'iPhone 16' ]]; then
+              continue
+            fi
             if [[ '${{ inputs.devices }}' == pro && "$model" != 'iPad Pro (12.9-inch) (5th generation)' ]]; then
               continue
             fi
@@ -117,6 +121,23 @@ jobs:
             done
             test -f "$drawings/zoom-ready.txt"
             xcrun simctl io "$device" screenshot "artifacts/$model/zoom.png"
+            cp "$drawings/zoom-sample.txt" "artifacts/$model/"
+            # Check the displayed pixel as well as the saved canvas pixels.
+            python3 - "artifacts/$model" <<'PY'
+          import pathlib, sys
+          from PIL import Image
+          folder = pathlib.Path(sys.argv[1])
+          x, y, w, h = map(int, (folder / 'zoom-sample.txt').read_text().split())
+          im = Image.open(folder / 'zoom.png').convert('RGB')
+          if (im.width > im.height) == (w > h):
+              px, py = round(x * im.width / w), round(y * im.height / h)
+          else:
+              px, py = im.width - 1 - round(y * im.width / h), round(x * im.height / w)
+          pixels = [im.getpixel((xx, yy)) for yy in range(max(0, py-8), min(im.height, py+9))
+                    for xx in range(max(0, px-8), min(im.width, px+9))]
+          assert any(max(rgb) < 100 for rgb in pixels), f'Paint is not visible near screenshot pixel {px},{py}'
+          print('PASS: zoomed stroke is visible at its touch position in the simulator screenshot')
+          PY
             touch "$drawings/zoom-captured.txt"
             for attempt in {1..45}; do
               [[ -f "$drawings/features-verified.txt" ]] && break

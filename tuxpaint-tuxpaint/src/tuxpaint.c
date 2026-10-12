@@ -1284,12 +1284,12 @@ static void SDL_Flip(SDL_Surface * screen)
 
 static void SDL_UpdateRect(SDL_Surface * screen, Sint32 x, Sint32 y, Sint32 w, Sint32 h)
 {
-  SDL_Rect r;
 #ifdef __IOS__
-  if (ios_saving_recovery)
-    return;
-  apple_apply_safe_area(window_screen, renderer);
-#endif
+  /* Keep drawing, dialog, and zoom refreshes on the same complete-frame path. */
+  (void)x; (void)y; (void)w; (void)h;
+  SDL_Flip(screen);
+#else
+  SDL_Rect r;
 
   r.x = x;
   r.y = y;
@@ -1301,11 +1301,8 @@ static void SDL_UpdateRect(SDL_Surface * screen, Sint32 x, Sint32 y, Sint32 w, S
   //  Docs says one must clear the renderer, even if this means a refresh of the whole thing.
   SDL_RenderClear(renderer);
   SDL_RenderCopy(renderer, texture, NULL, NULL);
-#ifdef __IOS__
-  ios_render_canvas_view();
-#endif
-
   SDL_RenderPresent(renderer);
+#endif
 }
 
 static void show_progress_bar(SDL_Surface * screen)
@@ -10626,6 +10623,9 @@ static unsigned draw_colors(unsigned action)
 
   old_color = cur_color;
 
+#ifdef __IOS__
+  SDL_FillRect(screen, &r_colors, SDL_MapRGB(screen->format, 255, 255, 255));
+#endif
   for (i = 0; i < (unsigned int)NUM_COLORS; i++)
   {
     dest.x = r_colors.x + i % gd_colors.cols * color_button_w;
@@ -10640,7 +10640,9 @@ static unsigned draw_colors(unsigned action)
     return old_colors_state;
 
   /* If more than one colors rows, fill the parts of the r_tcolors not covered by the title. */
+#ifndef __IOS__
   if (gd_colors.rows > 1)
+#endif
     SDL_FillRect(screen, &r_tcolors, SDL_MapRGBA(screen->format, 255, 255, 255, 255));
 
   if (colors_state == COLORSEL_ENABLE)
@@ -15236,6 +15238,13 @@ static void end_flat_dialog(int active)
 #ifdef __IOS__
   ios_view.active = active;
   apple_controls_enabled(active);
+  if (active)
+  {
+    SDL_Rect padding = {r_toolopt.x, r_toolopt.y + r_toolopt.h, r_toolopt.w,
+      r_canvas.h - r_toolopt.y - r_toolopt.h};
+    if (padding.h > 0)
+      SDL_FillRect(screen, &padding, SDL_MapRGB(screen->format, 255, 255, 255));
+  }
   SDL_Flip(screen);
 #else
   (void)active;
@@ -21234,6 +21243,12 @@ static int charsize(Uint16 c)
 static void draw_image_title(int t, SDL_Rect dest)
 {
 #ifdef __IOS__
+  if (dest.x == r_ttoolopt.x)
+  {
+    /* Clear transparent button corners and the unused rows after a dialog. */
+    SDL_Rect panel = {dest.x, dest.y, dest.w, r_canvas.h};
+    SDL_FillRect(screen, &panel, SDL_MapRGB(screen->format, 255, 255, 255));
+  }
   SDL_Rect background = dest;
   SDL_BlitScaled(img_title_on, NULL, screen, &background);
 #else
