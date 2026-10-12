@@ -347,6 +347,7 @@ typedef struct safer_dirent
 
 /* iOS */
 
+#define AUTOSAVE_GOING_BACKGROUND
 #include "ios_print.h"
 
 #else /* __MACOS__, __IOS__ */
@@ -1090,6 +1091,10 @@ static SDL_Surface *img_starter = NULL, *img_starter_bkgd = NULL;
 /* This SDL 1.2 <-> 2.0 backward compatibility functions are focused to the main window */
 
 static Uint32 window_format;
+#ifdef __IOS__
+static int ios_recovery_ready;
+static int ios_saving_recovery;
+#endif
 
 #define SDLKey SDL_Keycode
 #define SDLMod SDL_Keymod
@@ -1136,6 +1141,8 @@ static SDL_Surface *SDL_DisplayFormatAlpha(SDL_Surface * surface)
 static void SDL_Flip(SDL_Surface * screen)
 {
 #ifdef __IOS__
+  if (ios_saving_recovery)
+    return;
   apple_apply_safe_area(window_screen, renderer);
 #endif
   //SDL_UpdateWindowSurface(window_screen);
@@ -1149,6 +1156,8 @@ static void SDL_UpdateRect(SDL_Surface * screen, Sint32 x, Sint32 y, Sint32 w, S
 {
   SDL_Rect r;
 #ifdef __IOS__
+  if (ios_saving_recovery)
+    return;
   apple_apply_safe_area(window_screen, renderer);
 #endif
 
@@ -2783,7 +2792,7 @@ static void mainloop(void)
           }
         }
       }
-#ifdef AUTOSAVE_GOING_BACKGROUND
+#if defined(AUTOSAVE_GOING_BACKGROUND) && !defined(__IOS__)
       else if (event.type == SDL_APP_DIDENTERBACKGROUND)
       {
         /* Triggers a save to a temporary file in case the app is killed later.
@@ -14827,8 +14836,8 @@ static void load_current(void)
     file_id[strlen(file_id)] = '\0';
     found_autosaved = 1;
     fclose(fi);
-    free(fname);
   }
+  free(fname);
 #endif
 
   if (!found_autosaved)
@@ -14863,6 +14872,10 @@ static void load_current(void)
     }
     else
     {
+#if defined(__IOS__) && TARGET_OS_SIMULATOR
+      fprintf(stderr, "Restore: %s, image %dx%d, canvas %dx%d, recovery=%d\n",
+              fname, tmp->w, tmp->h, canvas->w, canvas->h, found_autosaved);
+#endif
       org_surf = SDL_DisplayFormat(tmp);
       DEBUG_PRINTF("Smearing canvas @ 4\n");
       autoscale_copy_smear_free(tmp, canvas, SDL_BlitSurface);
@@ -14905,10 +14918,12 @@ static void load_current(void)
   {
     /* Set file_id to the draw that were edited when the autosave triggered */
     determine_id();
+#ifndef __IOS__
     snprintf(ftmp, sizeof(ftmp), "saved/%s%s", AUTOSAVED_NAME, FNAME_EXTENSION);
     fname = get_fname(ftmp, DIR_SAVE);
     unlink(fname);
     free(fname);
+#endif
 
     /* The autosaved file comes from work that was not explicitely saved */
     been_saved = 0;
@@ -16492,7 +16507,7 @@ static int do_save(int tool, int dont_show_success_results, int autosave)
   /* Save the file: */
 
   if (autosave)
-    snprintf(tmp, sizeof(tmp), "saved/AUTOSAVED%s", FNAME_EXTENSION);
+    snprintf(tmp, sizeof(tmp), "saved/AUTOSAVED.tmp");
   else
     snprintf(tmp, sizeof(tmp), "saved/%s%s", file_id, FNAME_EXTENSION);
   fname = get_fname(tmp, DIR_SAVE);
@@ -16506,22 +16521,36 @@ static int do_save(int tool, int dont_show_success_results, int autosave)
             "%s\n" "The system error that occurred was:\n" "%s\n\n", fname, strerror(errno));
 
     draw_tux_text(TUX_OOPS, strerror(errno), 0);
+    free(fname);
+    undo_tmp_applied_text();
+    return 0;
   }
   else
   {
     if (!do_png_save(fi, fname, save_canvas, 1))
     {
       free(fname);
+      undo_tmp_applied_text();
       return 0;
     }
   }
 
-  free(fname);
-
-
   if (autosave)
-    /* No more process needed */
-    return 1;
+  {
+    char *recovery_fname;
+    int saved;
+
+    snprintf(tmp, sizeof(tmp), "saved/AUTOSAVED%s", FNAME_EXTENSION);
+    recovery_fname = get_fname(tmp, DIR_SAVE);
+    saved = (rename(fname, recovery_fname) == 0);
+    if (!saved)
+      fprintf(stderr, "Cannot replace recovery drawing: %s\n", strerror(errno));
+    free(recovery_fname);
+    free(fname);
+    undo_tmp_applied_text();
+    return saved;
+  }
+  free(fname);
 
   show_progress_bar(screen);
 
@@ -16599,6 +16628,14 @@ static int do_save(int tool, int dont_show_success_results, int autosave)
 
   undo_tmp_applied_text();
 
+#ifdef __IOS__
+  /* A successful explicit Save becomes the relaunch target. */
+  save_current();
+  snprintf(tmp, sizeof(tmp), "saved/AUTOSAVED%s", FNAME_EXTENSION);
+  fname = get_fname(tmp, DIR_SAVE);
+  unlink(fname);
+  free(fname);
+#endif
   return 1;
 }
 
@@ -17167,9 +17204,7 @@ static int do_png_save(FILE * fi, const char *const fname, SDL_Surface * surf, i
 
         png_write_end(png_ptr, NULL);
         png_destroy_write_struct(&png_ptr, &info_ptr);
-        fclose(fi);
-
-        return 1;
+        return (fclose(fi) == 0);
       }
     }
   }
@@ -29837,6 +29872,20 @@ int TP_EventFilter( __attribute__((unused))
  * FIXME
  */
 {
+#ifdef __IOS__
+  /* iOS can suspend us before the main loop next polls its event queue. */
+  if (event->type == SDL_APP_WILLENTERBACKGROUND || event->type == SDL_APP_TERMINATING)
+  {
+    if (ios_recovery_ready && !ios_saving_recovery)
+    {
+      ios_saving_recovery = 1;
+      if (do_save(cur_tool, 1, 1))
+        save_current();
+      ios_saving_recovery = 0;
+    }
+    return 0;
+  }
+#endif
   if (event->type == SDL_QUIT ||
       event->type == SDL_WINDOWEVENT ||
 #ifndef __IPHONEOS__
@@ -31368,6 +31417,51 @@ int main(int argc, char *argv[])
 
   /* Set up! */
   setup();
+#ifdef __IOS__
+  ios_recovery_ready = 1;
+#if TARGET_OS_SIMULATOR
+  /* CI-only fixture: exercise the real lifecycle save and startup restore. */
+  const char *recovery_test = SDL_getenv("TUXPAINT_TEST_RECOVERY");
+  if (recovery_test && *recovery_test)
+  {
+    char *test_result;
+    FILE *test_file;
+    SDL_Rect mark = {20, 20, 80, 80};
+    Uint32 marker = SDL_MapRGB(canvas->format, 231, 37, 149);
+    fprintf(stderr, "Recovery fixture: %s, canvas=%dx%d, start_blank=%d\n",
+            recovery_test, canvas->w, canvas->h, start_blank);
+    if (strcmp(recovery_test, "seed") == 0)
+    {
+      SDL_FillRect(canvas, &mark, marker);
+      been_saved = 0;
+      update_canvas(0, 0, canvas->w, canvas->h);
+      test_result = get_fname("recovery-seeded.txt", DIR_SAVE);
+    }
+    else
+    {
+      Uint8 test_r, test_g, test_b;
+      SDL_GetRGB(getpixels[canvas->format->BytesPerPixel](canvas, 40, 40),
+                 canvas->format, &test_r, &test_g, &test_b);
+      if (test_r != 231 || test_g != 37 || test_b != 149)
+      {
+        test_result = get_fname("recovery-actual.png", DIR_SAVE);
+        IMG_SavePNG(canvas, test_result);
+        free(test_result);
+        fprintf(stderr, "Recovery test: drawing did not survive relaunch; actual pixel=%u,%u,%u\n",
+                test_r, test_g, test_b);
+        return 2;
+      }
+      test_result = get_fname("recovery-verified.txt", DIR_SAVE);
+    }
+    test_file = fopen(test_result, "w");
+    if (!test_file)
+      return 3;
+    fprintf(test_file, "PASS\n");
+    fclose(test_file);
+    free(test_result);
+  }
+#endif
+#endif
 #ifdef DEBUG
   DEBUG_PRINTF("Seconds in early start-up: %.3f\n", (double)(time2 - time1) / CLOCK_SPEED);
   DEBUG_PRINTF("Seconds in late start-up:  %.3f\n", (double)(time2 - time1) / CLOCK_SPEED);
@@ -31390,6 +31484,9 @@ int main(int argc, char *argv[])
   mainloop();
 
   /* Close and quit! */
+#ifdef __IOS__
+  ios_recovery_ready = 0;
+#endif
   save_current();
   wait_for_sfx();
   cleanup();
