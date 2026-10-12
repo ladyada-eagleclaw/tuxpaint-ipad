@@ -106,7 +106,8 @@ target_compile_definitions(TuxPaint PRIVATE
 target_link_libraries(TuxPaint PRIVATE SDL2::SDL2main SDL2::SDL2-static
   SDL2_image::SDL2_image-static SDL2_mixer::SDL2_mixer-static
   SDL2_ttf::SDL2_ttf-static gfx png_static imagequant intl
-  "-framework Photos" "-framework UIKit" "-framework Foundation" "-lz" "-liconv")
+  "-framework Photos" "-framework UIKit" "-framework Foundation"
+  "-framework ImageIO" "-framework MobileCoreServices" "-lz" "-liconv")
 set_target_properties(TuxPaint PROPERTIES
   MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/Info.plist.in"
   MACOSX_BUNDLE_GUI_IDENTIFIER "org.ladyada.tuxpaint.ipad"
