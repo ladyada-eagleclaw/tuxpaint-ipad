@@ -61,7 +61,9 @@ jobs:
           xcrun simctl io "$device" screenshot artifacts/ipad-launch.png
           cat artifacts/app-stdout.txt artifacts/app-stderr.txt
           find "$HOME/Library/Logs/DiagnosticReports" -name 'TuxPaint*' -exec cp {} artifacts/ \;
-          ps -p "$app_pid" -o comm= | grep '/TuxPaint.app/TuxPaint$'
+          find "$HOME/Library/Developer/CoreSimulator/Devices/$device/data/Library/Logs" -name 'TuxPaint*' -exec cp {} artifacts/ \;
+          xcrun simctl spawn "$device" log show --style compact --last 5m --predicate 'process == "TuxPaint" OR eventMessage CONTAINS "org.ladyada.tuxpaint.ipad"' > artifacts/simulator.log
+          ps -p "$app_pid" -o pid=,comm=
       - uses: actions/upload-artifact@v4
         if: always()
         with:

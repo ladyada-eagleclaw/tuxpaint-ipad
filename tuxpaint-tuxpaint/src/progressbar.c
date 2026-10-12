@@ -46,7 +46,8 @@ void show_progress_bar_(SDL_Surface * screen, SDL_Texture * texture, SDL_Rendere
   static Uint32 oldtime;
   Uint32 newtime;
 
-  if (progress_bar_disabled)
+  /* Background font scans have no drawing targets. */
+  if (progress_bar_disabled || screen == NULL || texture == NULL || renderer == NULL)
     return;
 
   newtime = SDL_GetTicks();

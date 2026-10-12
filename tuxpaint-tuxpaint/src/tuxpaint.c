@@ -9380,7 +9380,12 @@ static void load_stamps(SDL_Surface * screen)
  */
 static int load_user_fonts_stub(void *vp)
 {
+#ifdef __IOS__
+  /* The font worker must not use the main thread's SDL renderer. */
+  return load_user_fonts(NULL, NULL, NULL, vp, NULL);
+#else
   return load_user_fonts(screen, texture, renderer, vp, NULL);
+#endif
 }
 #endif
 
