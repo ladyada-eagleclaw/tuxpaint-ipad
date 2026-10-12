@@ -55,6 +55,14 @@ void apple_controls_enabled(int enabled)
     menuButton.enabled = enabled;
 }
 
+int apple_menu_height(SDL_Renderer *renderer)
+{
+    int x1, y1, x2, y2;
+    SDL_RenderLogicalToWindow(renderer, 0, 0, &x1, &y1);
+    SDL_RenderLogicalToWindow(renderer, 0, 100, &x2, &y2);
+    return y2 > y1 ? (int)ceilf(4400.0f / (y2 - y1)) : 44;
+}
+
 static void positionControls(SDL_Renderer *renderer)
 {
     if (!menuButton) return;
@@ -166,19 +174,36 @@ static void exportImageToPhotos(const char *filename)
         return;
     }
     NSURL *url = [NSURL fileURLWithPath:path];
+    NSData *imageData = [NSData dataWithContentsOfURL:url];
+    if (!imageData) {
+        showExportError(@"The drawing could not be read. Please try again.");
+        return;
+    }
 
     [PHPhotoLibrary requestAuthorizationForAccessLevel:PHAccessLevelAddOnly
         handler:^(PHAuthorizationStatus status) {
             if (status != PHAuthorizationStatusAuthorized &&
                 status != PHAuthorizationStatusLimited) {
-                showExportError(@"Your picture is still saved in Tux Paint. Allow Tux Paint to add photos in Settings to also save it to Photos.");
+                showExportError(@"Allow Tux Paint to add photos in Settings, then try again. You can also use Share Drawing to save a copy to Files.");
                 return;
             }
             [[PHPhotoLibrary sharedPhotoLibrary] performChanges:^{
-                [PHAssetChangeRequest creationRequestForAssetFromImageAtFileURL:url];
+                PHAssetCreationRequest *request = [PHAssetCreationRequest creationRequestForAsset];
+                PHAssetResourceCreationOptions *options = [PHAssetResourceCreationOptions new];
+                options.originalFilename = url.lastPathComponent;
+                [request addResourceWithType:PHAssetResourceTypePhoto data:imageData options:options];
             } completionHandler:^(BOOL success, NSError *error) {
+#if TARGET_OS_SIMULATOR
+                if (SDL_getenv("TUXPAINT_TEST_FEATURES")) {
+                    NSString *directory = [NSString stringWithUTF8String:apple_preferencesPath()];
+                    NSString *result = success ? @"PASS: Photos accepted the drawing\n" : error.localizedDescription;
+                    [result writeToFile:[directory stringByAppendingPathComponent:
+                        success ? @"photos-verified.txt" : @"photos-failed.txt"]
+                        atomically:YES encoding:NSUTF8StringEncoding error:nil];
+                }
+#endif
                 if (!success) {
-                    showExportError(error.localizedDescription ?: @"The picture could not be added to Photos. Your saved picture is still in Tux Paint.");
+                    showExportError(error.localizedDescription ?: @"The drawing could not be added to Photos. Please try again or use Share Drawing to save a copy to Files.");
                 }
                 else {
                     dispatch_async(dispatch_get_main_queue(), ^{

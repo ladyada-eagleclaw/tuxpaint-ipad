@@ -814,6 +814,7 @@ static int button_h;            /* was 48 */
 static int tool_button_w, tool_button_h; /* Left toolbar cells; options keep their own size. */
 #ifdef __IOS__
 static int ios_kids_mode;
+static int ios_menu_height;
 static const int ios_kids_tools[] = {
   TOOL_BRUSH, TOOL_STAMP, TOOL_SHAPES, TOOL_MAGIC, TOOL_UNDO,
   TOOL_REDO, TOOL_ERASER, TOOL_NEW, TOOL_OPEN, TOOL_SAVE
@@ -913,6 +914,9 @@ static void setup_normal_screen_layout(void)
   r_ttools.y = 0;
   r_ttools.w = gd_tools.cols * tool_button_w;
   r_ttools.h = 40 * button_scale;
+#ifdef __IOS__
+  r_ttools.h = max(r_ttools.h, ios_menu_height);
+#endif
 
   r_ttoolopt.w = gd_toolopt.cols * button_w;
   r_ttoolopt.h = 40 * button_scale;
@@ -1099,6 +1103,8 @@ static Uint32 window_format;
 #ifdef __IOS__
 static int ios_recovery_ready;
 static int ios_saving_recovery;
+static int ios_save_in_progress, ios_recovery_pending;
+static Uint32 ios_last_input;
 #include "CanvasView.h"
 static TPCanvasView ios_view;
 static TPTouchInput ios_touch;
@@ -2349,6 +2355,10 @@ static void load_current(void);
 static void save_current(void);
 #ifdef __IOS__
 static void ios_export_current(int action);
+static void ios_checkpoint(void);
+#if TARGET_OS_SIMULATOR
+static void ios_simulator_checks(void);
+#endif
 #endif
 static int do_prompt_image_flash(const char *const text,
                                  const char *const btn_yes,
@@ -2875,10 +2885,20 @@ static void mainloop(void)
 
     pre_event_time = SDL_GetTicks();
 
+#if defined(__IOS__) && TARGET_OS_SIMULATOR
+    ios_simulator_checks();
+#endif
 
     while (SDL_PollEvent(&event))
     {
 #ifdef __IOS__
+      if (event.type == SDL_MOUSEBUTTONDOWN || event.type == SDL_MOUSEBUTTONUP ||
+          event.type == SDL_TEXTINPUT || event.type == SDL_KEYDOWN ||
+          (event.type == SDL_MOUSEMOTION && button_down))
+      {
+        ios_recovery_pending = 1;
+        ios_last_input = SDL_GetTicks();
+      }
       if (event.type == SDL_USEREVENT && event.user.code >= IOS_ACTION_MENU &&
           event.user.code <= IOS_ACTION_VIEW_CHANGED)
       {
@@ -2894,7 +2914,7 @@ static void mainloop(void)
           ios_kids_mode = !ios_kids_mode;
           apple_set_kids_mode(ios_kids_mode);
           gd_tools.rows = TOOLBAR_TOOL_COUNT / gd_tools.cols;
-          tool_button_h = (r_canvas.h - r_ttoolopt.h) / gd_tools.rows;
+          tool_button_h = (r_canvas.h - max(r_ttoolopt.h, ios_menu_height)) / gd_tools.rows;
           r_ttools.h = r_canvas.h - gd_tools.rows * tool_button_h;
           r_tools.y = r_ttools.h;
           r_tools.h = gd_tools.rows * tool_button_h;
@@ -7255,6 +7275,13 @@ static void mainloop(void)
     if (motioner | hatmotioner)
       handle_motioners(oldpos_x, oldpos_y, motioner, hatmotioner, old_hat_ticks, val_x, val_y, valhat_x, valhat_y);
 
+#ifdef __IOS__
+    /* Save after a short pause, so a crash need not lose an entire session. */
+    if (ios_recovery_pending && !button_down && ios_touch.count == 0 &&
+        shape_tool_mode == SHAPE_TOOL_MODE_DONE && stamp_tool_mode == STAMP_TOOL_MODE_PLACE &&
+        SDL_GetTicks() - ios_last_input >= 1500)
+      ios_checkpoint();
+#endif
 
     SDL_Delay(10);
       
@@ -15099,8 +15126,11 @@ static void load_current(void)
   else
   {
     /* Set file_id to the draw that were edited when the autosave triggered */
+#ifdef __IOS__
+    /* Recovery is a new copy: a stale sidecar must never overwrite another drawing. */
+    file_id[0] = '\0';
+#else
     determine_id();
-#ifndef __IOS__
     snprintf(ftmp, sizeof(ftmp), "saved/%s%s", AUTOSAVED_NAME, FNAME_EXTENSION);
     fname = get_fname(ftmp, DIR_SAVE);
     unlink(fname);
@@ -15150,7 +15180,11 @@ static void save_current(void)
     return;
   }
 
+#ifdef __IOS__
+  fname = get_fname("current_id.tmp", DIR_SAVE);
+#else
   fname = get_fname("current_id.txt", DIR_SAVE);
+#endif
 
   fi = fopen(fname, "w");
   if (fi == NULL)
@@ -15163,8 +15197,17 @@ static void save_current(void)
   }
   else
   {
-    fprintf(fi, "%s\n", file_id);
-    fclose(fi);
+    int written = fprintf(fi, "%s\n", file_id) >= 0;
+    int closed = fclose(fi) == 0;
+#ifdef __IOS__
+    char *target = get_fname("current_id.txt", DIR_SAVE);
+    if (!written || !closed || rename(fname, target) != 0)
+      fprintf(stderr, "Cannot update current drawing: %s\n", strerror(errno));
+    free(target);
+#else
+    (void)written;
+    (void)closed;
+#endif
   }
 
   free(fname);
@@ -16608,6 +16651,7 @@ static int ios_write_share_image(void)
 
 static void ios_export_current(int action)
 {
+  ios_checkpoint();
   if (!ios_write_share_image())
   {
     SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Share Drawing",
@@ -16617,9 +16661,41 @@ static void ios_export_current(int action)
   if (action == IOS_ACTION_PHOTOS) apple_save_to_photos(apple_share_path());
   else apple_show_share(apple_share_path());
 }
+
+static void ios_checkpoint(void)
+{
+  if (!ios_recovery_ready || ios_saving_recovery || ios_save_in_progress) return;
+  ios_saving_recovery = 1;
+  if (do_save(cur_tool, 1, 1))
+  {
+    save_current();
+    ios_recovery_pending = 0;
+  }
+  else
+  {
+    /* Retry after another pause, without repeatedly blocking the drawing loop. */
+    ios_last_input = SDL_GetTicks();
+    fprintf(stderr, "The recovery drawing could not be saved.\n");
+  }
+  ios_saving_recovery = 0;
+}
 #endif
 
+static int do_save_content(int tool, int dont_show_success_results, int autosave);
 static int do_save(int tool, int dont_show_success_results, int autosave)
+{
+#ifdef __IOS__
+  if (ios_save_in_progress) return 0;
+  ios_save_in_progress = 1;
+#endif
+  int result = do_save_content(tool, dont_show_success_results, autosave);
+#ifdef __IOS__
+  ios_save_in_progress = 0;
+#endif
+  return result;
+}
+
+static int do_save_content(int tool, int dont_show_success_results, int autosave)
 {
   int scroll;
   char *fname;
@@ -16696,6 +16772,7 @@ static int do_save(int tool, int dont_show_success_results, int autosave)
   {
     fprintf(stderr, "Cannot save the any pictures! SORRY!\n\n");
     draw_tux_text(TUX_OOPS, strerror(errno), 0);
+    undo_tmp_applied_text();
     return 0;
   }
 
@@ -16711,6 +16788,7 @@ static int do_save(int tool, int dont_show_success_results, int autosave)
   {
     fprintf(stderr, "Cannot save any pictures! SORRY!\n\n");
     draw_tux_text(TUX_OOPS, strerror(errno), 0);
+    undo_tmp_applied_text();
     return 0;
   }
 
@@ -16727,6 +16805,7 @@ static int do_save(int tool, int dont_show_success_results, int autosave)
   {
     fprintf(stderr, "Cannot save any pictures! SORRY!\n\n");
     draw_tux_text(TUX_OOPS, strerror(errno), 0);
+    undo_tmp_applied_text();
     return 0;
   }
 
@@ -16736,6 +16815,7 @@ static int do_save(int tool, int dont_show_success_results, int autosave)
   {
     fprintf(stderr, "Cannot save label information! SORRY!\n\n");
     draw_tux_text(TUX_OOPS, strerror(errno), 0);
+    undo_tmp_applied_text();
     return 0;
   }
 
@@ -16750,7 +16830,11 @@ static int do_save(int tool, int dont_show_success_results, int autosave)
   if (autosave)
     snprintf(tmp, sizeof(tmp), "saved/AUTOSAVED.tmp");
   else
+#ifdef __IOS__
+    snprintf(tmp, sizeof(tmp), "saved/%s.tmp", file_id);
+#else
     snprintf(tmp, sizeof(tmp), "saved/%s%s", file_id, FNAME_EXTENSION);
+#endif
   fname = get_fname(tmp, DIR_SAVE);
   debug(fname);
 
@@ -16791,6 +16875,20 @@ static int do_save(int tool, int dont_show_success_results, int autosave)
     undo_tmp_applied_text();
     return saved;
   }
+#ifdef __IOS__
+  /* Keep an existing saved picture intact until its replacement is complete. */
+  snprintf(tmp, sizeof(tmp), "saved/%s%s", file_id, FNAME_EXTENSION);
+  char *saved_fname = get_fname(tmp, DIR_SAVE);
+  if (rename(fname, saved_fname) != 0)
+  {
+    fprintf(stderr, "Cannot replace saved drawing: %s\n", strerror(errno));
+    free(saved_fname);
+    free(fname);
+    undo_tmp_applied_text();
+    return 0;
+  }
+  free(saved_fname);
+#endif
   free(fname);
 
   show_progress_bar(screen);
@@ -17553,7 +17651,11 @@ static int do_open(void)
   int active = begin_flat_dialog();
   int result = do_open_content();
 #ifdef __IOS__
-  if (result) tp_view_fit(&ios_view);
+  if (result)
+  {
+    tp_view_fit(&ios_view);
+    ios_checkpoint();
+  }
 #endif
   end_flat_dialog(active);
   return result;
@@ -17656,6 +17758,9 @@ static int do_open_content(void)
         {
           f = readdir(d);
 
+#ifdef __IOS__
+          if (f && strcmp(f->d_name, AUTOSAVED_NAME FNAME_EXTENSION) == 0) continue;
+#endif
           if (f != NULL)
           {
             memcpy(&(fs[num_files_in_dirs].f), f, sizeof(struct dirent));
@@ -18940,6 +19045,9 @@ static int do_slideshow_content(void)
     {
       f = readdir(d);
 
+#ifdef __IOS__
+      if (f && strcmp(f->d_name, AUTOSAVED_NAME FNAME_EXTENSION) == 0) continue;
+#endif
       if (f != NULL)
       {
         memcpy(&(fs[num_files_in_dir].f), f, sizeof(struct dirent));
@@ -23199,7 +23307,11 @@ static int do_new_dialog(void)
   int active = begin_flat_dialog();
   int result = do_new_dialog_content();
 #ifdef __IOS__
-  if (result) tp_view_fit(&ios_view);
+  if (result)
+  {
+    tp_view_fit(&ios_view);
+    ios_checkpoint();
+  }
 #endif
   end_flat_dialog(active);
   return result;
@@ -30194,13 +30306,7 @@ int TP_EventFilter( __attribute__((unused))
   /* iOS can suspend us before the main loop next polls its event queue. */
   if (event->type == SDL_APP_WILLENTERBACKGROUND || event->type == SDL_APP_TERMINATING)
   {
-    if (ios_recovery_ready && !ios_saving_recovery)
-    {
-      ios_saving_recovery = 1;
-      if (do_save(cur_tool, 1, 1))
-        save_current();
-      ios_saving_recovery = 0;
-    }
+    ios_checkpoint();
     return 0;
   }
 #endif
@@ -30725,6 +30831,9 @@ static void setup(void)
   if (button_size_auto)         /* Automatic size of buttons, see https://sourceforge.net/p/tuxpaint/feature-requests/218/ */
     button_scale = (float)min((48 * screen->w) / 800, (48 * screen->h) / 600) / ORIGINAL_BUTTON_SIZE;
 
+#ifdef __IOS__
+  ios_menu_height = apple_menu_height(renderer);
+#endif
   setup_screen_layout();
   set_color_picker_crosshair_size();
 
@@ -31648,6 +31757,10 @@ static void claim_to_be_ready(void)
 /**
  * FIXME
  */
+#if defined(__IOS__) && TARGET_OS_SIMULATOR
+#include "SimulatorChecks.inc"
+#endif
+
 int main(int argc, char *argv[])
 {
 #ifdef DEBUG
@@ -31746,6 +31859,24 @@ int main(int argc, char *argv[])
 
   /* Set up! */
   setup();
+#ifdef DEBUG
+  DEBUG_PRINTF("Seconds in early start-up: %.3f\n", (double)(time2 - time1) / CLOCK_SPEED);
+  DEBUG_PRINTF("Seconds in late start-up:  %.3f\n", (double)(time2 - time1) / CLOCK_SPEED);
+#endif
+
+
+#ifdef DEBUG
+  /* Confirm pango's character set */
+  if (1)
+  {
+    const char *charset;
+
+    g_get_charset(&charset);
+    printf("pango charset: %s\n", charset);
+  }
+#endif
+
+  claim_to_be_ready();
 #ifdef __IOS__
   apple_install_controls(window_screen, renderer, r_ttools.x, r_ttools.y, r_ttools.w, r_ttools.h);
   ios_recovery_ready = 1;
@@ -31792,24 +31923,6 @@ int main(int argc, char *argv[])
   }
 #endif
 #endif
-#ifdef DEBUG
-  DEBUG_PRINTF("Seconds in early start-up: %.3f\n", (double)(time2 - time1) / CLOCK_SPEED);
-  DEBUG_PRINTF("Seconds in late start-up:  %.3f\n", (double)(time2 - time1) / CLOCK_SPEED);
-#endif
-
-
-#ifdef DEBUG
-  /* Confirm pango's character set */
-  if (1)
-  {
-    const char *charset;
-
-    g_get_charset(&charset);
-    printf("pango charset: %s\n", charset);
-  }
-#endif
-
-  claim_to_be_ready();
 
   mainloop();
 

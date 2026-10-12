@@ -45,6 +45,7 @@ enum {
   IOS_ACTION_VIEW_CHANGED
 };
 int apple_kids_mode(void);
+int apple_menu_height(struct SDL_Renderer *renderer);
 void apple_set_kids_mode(int enabled);
 void apple_install_controls(struct SDL_Window *window, struct SDL_Renderer *renderer,
                             int x, int y, int width, int height);

@@ -71,16 +71,18 @@ jobs:
             xcrun simctl bootstatus "$device" -b
             xcrun simctl install "$device" "$app"
             recovery_mode=""
+            feature_mode=checks
             if [[ "$model" == 'iPad Pro (12.9-inch) (5th generation)' ]]; then
               recovery_mode=seed
+              feature_mode=""
             fi
-            launch_result=$(SIMCTL_CHILD_TUXPAINT_TEST_RECOVERY="$recovery_mode" xcrun simctl launch --stdout="$PWD/artifacts/$model/app-stdout.txt" --stderr="$PWD/artifacts/$model/app-stderr.txt" "$device" org.ladyada.tuxpaint.ipad)
+            launch_result=$(SIMCTL_CHILD_TUXPAINT_TEST_RECOVERY="$recovery_mode" SIMCTL_CHILD_TUXPAINT_TEST_FEATURES="$feature_mode" xcrun simctl launch --stdout="$PWD/artifacts/$model/app-stdout.txt" --stderr="$PWD/artifacts/$model/app-stderr.txt" "$device" org.ladyada.tuxpaint.ipad)
             echo "$model: $launch_result"
             app_pid=${launch_result##*: }
             sleep 15
+            container=$(xcrun simctl get_app_container "$device" org.ladyada.tuxpaint.ipad data)
+            drawings="$container/Library/Application Support/TuxPaint"
             if [[ "$recovery_mode" == seed ]]; then
-              container=$(xcrun simctl get_app_container "$device" org.ladyada.tuxpaint.ipad data)
-              drawings="$container/Library/Application Support/TuxPaint"
               for attempt in {1..45}; do
                 [[ -f "$drawings/recovery-seeded.txt" ]] && break
                 sleep 1
@@ -96,7 +98,7 @@ jobs:
               cp "$drawings/saved/AUTOSAVED.png" "artifacts/$model/recovery.png"
               xcrun simctl terminate "$device" org.ladyada.tuxpaint.ipad
               cp "$drawings/saved/AUTOSAVED.png" "artifacts/$model/recovery-after-termination.png"
-              launch_result=$(SIMCTL_CHILD_TUXPAINT_TEST_RECOVERY=verify xcrun simctl launch --stdout="$PWD/artifacts/$model/restore-stdout.txt" --stderr="$PWD/artifacts/$model/restore-stderr.txt" "$device" org.ladyada.tuxpaint.ipad)
+              launch_result=$(SIMCTL_CHILD_TUXPAINT_TEST_RECOVERY=verify SIMCTL_CHILD_TUXPAINT_TEST_FEATURES=checks xcrun simctl launch --stdout="$PWD/artifacts/$model/restore-stdout.txt" --stderr="$PWD/artifacts/$model/restore-stderr.txt" "$device" org.ladyada.tuxpaint.ipad)
               app_pid=${launch_result##*: }
               for attempt in {1..45}; do
                 [[ -f "$drawings/recovery-verified.txt" ]] && break
@@ -109,7 +111,29 @@ jobs:
               cp "$drawings/recovery-verified.txt" "artifacts/$model/"
               echo 'PASS: drawing survived background, termination, and relaunch.'
             fi
+            for attempt in {1..45}; do
+              [[ -f "$drawings/features-verified.txt" ]] && break
+              sleep 1
+            done
+            test -f "$drawings/features-verified.txt"
+            cp "$drawings/features-verified.txt" "artifacts/$model/"
+            cp "$container/tmp/Tux Paint Drawing.png" "artifacts/$model/shared-drawing.png"
             xcrun simctl io "$device" screenshot "artifacts/$model/launch.png"
+            xcrun simctl terminate "$device" org.ladyada.tuxpaint.ipad
+            SIMCTL_CHILD_TUXPAINT_TEST_FEATURES=share-only xcrun simctl launch --stderr="$PWD/artifacts/$model/share-stderr.txt" "$device" org.ladyada.tuxpaint.ipad
+            sleep 8
+            xcrun simctl io "$device" screenshot "artifacts/$model/share.png"
+            xcrun simctl terminate "$device" org.ladyada.tuxpaint.ipad
+            xcrun simctl privacy "$device" grant photos-add org.ladyada.tuxpaint.ipad
+            launch_result=$(SIMCTL_CHILD_TUXPAINT_TEST_FEATURES=photos-only xcrun simctl launch --stderr="$PWD/artifacts/$model/photos-stderr.txt" "$device" org.ladyada.tuxpaint.ipad)
+            app_pid=${launch_result##*: }
+            for attempt in {1..45}; do
+              [[ -f "$drawings/photos-verified.txt" ]] && break
+              sleep 1
+            done
+            test -f "$drawings/photos-verified.txt"
+            cp "$drawings/photos-verified.txt" "artifacts/$model/"
+            xcrun simctl io "$device" screenshot "artifacts/$model/photos.png"
             cat "artifacts/$model/app-stdout.txt" "artifacts/$model/app-stderr.txt"
             find "$HOME/Library/Logs/DiagnosticReports" -name 'TuxPaint*' -exec cp {} "artifacts/$model/" \;
             find "$HOME/Library/Developer/CoreSimulator/Devices/$device/data/Library/Logs" -name 'TuxPaint*' -exec cp {} "artifacts/$model/" \;
