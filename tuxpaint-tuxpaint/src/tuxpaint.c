@@ -813,7 +813,12 @@ static int button_w;            /* was 48 */
 static int button_h;            /* was 48 */
 static int tool_button_w, tool_button_h; /* Left toolbar cells; options keep their own size. */
 #ifdef __IOS__
-#define TOOLBAR_TOOL_COUNT TOOL_PRINT /* Print and Quit are not available on iOS. */
+static int ios_kids_mode;
+static const int ios_kids_tools[] = {
+  TOOL_BRUSH, TOOL_STAMP, TOOL_SHAPES, TOOL_MAGIC, TOOL_UNDO,
+  TOOL_REDO, TOOL_ERASER, TOOL_NEW, TOOL_OPEN, TOOL_SAVE
+};
+#define TOOLBAR_TOOL_COUNT (ios_kids_mode ? 10 : TOOL_PRINT)
 #else
 #define TOOLBAR_TOOL_COUNT NUM_TOOLS
 #endif
@@ -1094,7 +1099,27 @@ static Uint32 window_format;
 #ifdef __IOS__
 static int ios_recovery_ready;
 static int ios_saving_recovery;
+#include "CanvasView.h"
+static TPCanvasView ios_view;
+static TPTouchInput ios_touch;
+static int ios_pointer_x, ios_pointer_y, ios_pointer_down, ios_using_touch;
 #endif
+
+static int toolbar_tool_at(int slot)
+{
+  if (slot < 0 || slot >= TOOLBAR_TOOL_COUNT) return -1;
+#ifdef __IOS__
+  if (ios_kids_mode) return ios_kids_tools[slot];
+#endif
+  return slot;
+}
+
+static int toolbar_slot_for_tool(int tool)
+{
+  for (int slot = 0; slot < TOOLBAR_TOOL_COUNT; slot++)
+    if (toolbar_tool_at(slot) == tool) return slot;
+  return 0;
+}
 
 #define SDLKey SDL_Keycode
 #define SDLMod SDL_Keymod
@@ -1103,7 +1128,10 @@ static void SDL_WarpMouse(Uint16 x, Uint16 y)
 {
 #ifdef __IOS__
   int window_x, window_y;
-  SDL_RenderLogicalToWindow(renderer, x, y, &window_x, &window_y);
+  float view_x = x, view_y = y;
+  if (tp_view_contains(&ios_view, x, y))
+    tp_view_to_screen(&ios_view, &view_x, &view_y);
+  SDL_RenderLogicalToWindow(renderer, view_x, view_y, &window_x, &window_y);
   SDL_WarpMouseInWindow(window_screen, window_x, window_y);
 #else
   SDL_WarpMouseInWindow(window_screen, x, y);
@@ -1114,8 +1142,16 @@ static Uint32 get_mouse_state(int *x, int *y)
 {
   Uint32 buttons = SDL_GetMouseState(x, y);
 #ifdef __IOS__
+  if (ios_using_touch)
+  {
+    *x = ios_pointer_x;
+    *y = ios_pointer_y;
+    return ios_pointer_down ? SDL_BUTTON_LMASK : 0;
+  }
   float logical_x, logical_y;
   SDL_RenderWindowToLogical(renderer, *x, *y, &logical_x, &logical_y);
+  if (tp_view_contains(&ios_view, logical_x, logical_y))
+    tp_view_to_canvas(&ios_view, &logical_x, &logical_y);
   *x = (int)logical_x;
   *y = (int)logical_y;
 #endif
@@ -1138,6 +1174,91 @@ static SDL_Surface *SDL_DisplayFormatAlpha(SDL_Surface * surface)
   return (tmp);
 }
 
+#ifdef __IOS__
+static void ios_render_canvas_view(void)
+{
+  if (ios_view.active && ios_view.zoom > 1.001f)
+  {
+    SDL_Rect source = {r_canvas.x + (int)ios_view.x, r_canvas.y + (int)ios_view.y,
+      (int)(r_canvas.w / ios_view.zoom), (int)(r_canvas.h / ios_view.zoom)};
+    SDL_RenderCopy(renderer, texture, &source, &r_canvas);
+  }
+}
+
+static int ios_poll_event(SDL_Event *event)
+{
+  TPPointerEvent pointer;
+  for (;;)
+  {
+    if (tp_touch_next(&ios_touch, &pointer))
+    {
+      SDL_zero(*event);
+      if (pointer.type == TP_VIEW_CHANGED)
+      {
+        event->type = SDL_USEREVENT;
+        event->user.code = IOS_ACTION_VIEW_CHANGED;
+        return 1;
+      }
+      float x = pointer.x, y = pointer.y;
+      if (pointer.canvas) tp_view_to_canvas(&ios_view, &x, &y);
+      ios_using_touch = 1;
+      if (pointer.type == TP_TOUCH_MOVE)
+      {
+        event->type = SDL_MOUSEMOTION;
+        event->motion.which = SDL_TOUCH_MOUSEID;
+        event->motion.state = ios_pointer_down ? SDL_BUTTON_LMASK : 0;
+        event->motion.x = x;
+        event->motion.y = y;
+        event->motion.xrel = (int)x - ios_pointer_x;
+        event->motion.yrel = (int)y - ios_pointer_y;
+      }
+      else
+      {
+        ios_pointer_down = pointer.type == TP_TOUCH_DOWN;
+        event->type = ios_pointer_down ? SDL_MOUSEBUTTONDOWN : SDL_MOUSEBUTTONUP;
+        event->button.which = SDL_TOUCH_MOUSEID;
+        event->button.button = SDL_BUTTON_LEFT;
+        event->button.state = ios_pointer_down ? SDL_PRESSED : SDL_RELEASED;
+        event->button.clicks = 1;
+        event->button.x = x;
+        event->button.y = y;
+      }
+      ios_pointer_x = x;
+      ios_pointer_y = y;
+      return 1;
+    }
+    if (!SDL_PollEvent(event))
+    {
+      tp_touch_tick(&ios_touch, SDL_GetTicks());
+      if (ios_touch.read != ios_touch.write) continue;
+      return 0;
+    }
+    if (event->type == SDL_FINGERDOWN || event->type == SDL_FINGERMOTION || event->type == SDL_FINGERUP)
+    {
+      int kind = event->type == SDL_FINGERDOWN ? TP_TOUCH_DOWN :
+        (event->type == SDL_FINGERUP ? TP_TOUCH_UP : TP_TOUCH_MOVE);
+      tp_touch_event(&ios_touch, &ios_view, kind, event->tfinger.fingerId,
+                     event->tfinger.x * WINDOW_WIDTH, event->tfinger.y * WINDOW_HEIGHT,
+                     event->tfinger.timestamp);
+      continue;
+    }
+    if (event->type == SDL_MOUSEMOTION || event->type == SDL_MOUSEBUTTONDOWN || event->type == SDL_MOUSEBUTTONUP)
+    {
+      float x = event->button.x, y = event->button.y;
+      ios_using_touch = 0;
+      if (tp_view_contains(&ios_view, x, y))
+      {
+        tp_view_to_canvas(&ios_view, &x, &y);
+        event->button.x = x;
+        event->button.y = y;
+      }
+    }
+    return 1;
+  }
+}
+#define SDL_PollEvent ios_poll_event
+#endif
+
 static void SDL_Flip(SDL_Surface * screen)
 {
 #ifdef __IOS__
@@ -1149,6 +1270,9 @@ static void SDL_Flip(SDL_Surface * screen)
   SDL_UpdateTexture(texture, NULL, screen->pixels, screen->pitch);
   SDL_RenderClear(renderer);
   SDL_RenderCopy(renderer, texture, NULL, NULL);
+#ifdef __IOS__
+  ios_render_canvas_view();
+#endif
   SDL_RenderPresent(renderer);
 }
 
@@ -1171,6 +1295,9 @@ static void SDL_UpdateRect(SDL_Surface * screen, Sint32 x, Sint32 y, Sint32 w, S
   //  Docs says one must clear the renderer, even if this means a refresh of the whole thing.
   SDL_RenderClear(renderer);
   SDL_RenderCopy(renderer, texture, NULL, NULL);
+#ifdef __IOS__
+  ios_render_canvas_view();
+#endif
 
   SDL_RenderPresent(renderer);
 }
@@ -2220,6 +2347,9 @@ static void playstampdesc(int chan);
 static void do_wait(int counter);
 static void load_current(void);
 static void save_current(void);
+#ifdef __IOS__
+static void ios_export_current(int action);
+#endif
 static int do_prompt_image_flash(const char *const text,
                                  const char *const btn_yes,
                                  const char *const btn_no, SDL_Surface * img1,
@@ -2685,6 +2815,9 @@ static void mainloop(void)
   Uint32 last_cursor_blink, cur_cursor_blink, pre_event_time, current_event_time;
   SDL_Rect update_rect;
   SDL_Rect real_r_tools = r_tools;
+#ifdef __IOS__
+  ios_view.active = 1;
+#endif
 
 #ifdef DEBUG
   Uint16 key_unicode;
@@ -2745,6 +2878,43 @@ static void mainloop(void)
 
     while (SDL_PollEvent(&event))
     {
+#ifdef __IOS__
+      if (event.type == SDL_USEREVENT && event.user.code >= IOS_ACTION_MENU &&
+          event.user.code <= IOS_ACTION_VIEW_CHANGED)
+      {
+        int action = event.user.code;
+        if (action == IOS_ACTION_SHARE || action == IOS_ACTION_PHOTOS)
+        {
+          ios_export_current(action);
+          continue;
+        }
+        if (action == IOS_ACTION_FIT) tp_view_fit(&ios_view);
+        if (action == IOS_ACTION_KIDS)
+        {
+          ios_kids_mode = !ios_kids_mode;
+          apple_set_kids_mode(ios_kids_mode);
+          gd_tools.rows = TOOLBAR_TOOL_COUNT / gd_tools.cols;
+          tool_button_h = (r_canvas.h - r_ttoolopt.h) / gd_tools.rows;
+          r_ttools.h = r_canvas.h - gd_tools.rows * tool_button_h;
+          r_tools.y = r_ttools.h;
+          r_tools.h = gd_tools.rows * tool_button_h;
+          real_r_tools = r_tools;
+          tool_scroll = 0;
+          apple_install_controls(window_screen, renderer, r_ttools.x, r_ttools.y, r_ttools.w, r_ttools.h);
+          /* Use the usual tool switch to commit pending text and reset previews. */
+          SDL_zero(event);
+          event.type = SDL_MOUSEBUTTONDOWN;
+          event.button.button = SDL_BUTTON_LEFT;
+          event.button.x = tool_button_w / 2;
+          event.button.y = r_tools.y + tool_button_h / 2;
+        }
+        else
+        {
+          SDL_Flip(screen);
+          continue;
+        }
+      }
+#endif
       current_event_time = SDL_GetTicks();
 
       /* To avoid getting stuck in a 'catching up with mouse motion' interface lock-up */
@@ -3630,9 +3800,9 @@ static void mainloop(void)
             brushflag = 0;
             magicflag = 0;
             magic_switchout(canvas);
-            whicht = tool_scroll + GRIDHIT_GD(real_r_tools, gd_tools);
+            whicht = toolbar_tool_at(tool_scroll + GRIDHIT_GD(real_r_tools, gd_tools));
 
-            if (whicht < TOOLBAR_TOOL_COUNT && tool_avail[whicht] && (valid_click(event.button.button) || whicht == TOOL_PRINT))
+            if (whicht >= 0 && whicht < NUM_TOOLS && tool_avail[whicht] && (valid_click(event.button.button) || whicht == TOOL_PRINT))
             {
               /* Allow middle/right-click on "Print", since [Alt]+click
                  on Mac OS X changes it from left click to middle! */
@@ -6420,8 +6590,8 @@ static void mainloop(void)
 
           else
           {
-            if (tool_avail[((event.button.x - r_tools.x) / tool_button_w) +
-                           ((event.button.y - r_tools.y) / tool_button_h) * gd_tools.cols])
+            int hovered_tool = toolbar_tool_at(GRIDHIT_GD(r_tools, gd_tools));
+            if (hovered_tool >= 0 && tool_avail[hovered_tool])
             {
               do_setcursor(cursor_hand);
             }
@@ -9989,13 +10159,14 @@ static void draw_toolbar(void)
   SDL_Rect dest;
 
   draw_image_title(TITLE_TOOLS, r_ttools);
-  for (int tool = 0; tool < TOOLBAR_TOOL_COUNT; tool++)
+  for (int slot = 0; slot < TOOLBAR_TOOL_COUNT; slot++)
   {
+    int tool = toolbar_tool_at(slot);
     SDL_Surface *body = tool == cur_tool ? img_btn_down :
       (tool_avail[tool] ? img_btn_up : img_btn_off);
     SDL_Surface *tint = tool == cur_tool || tool_avail[tool] ? img_black : img_grey;
-    int x = (tool % gd_tools.cols) * tool_button_w;
-    int y = r_tools.y + (tool / gd_tools.cols) * tool_button_h;
+    int x = (slot % gd_tools.cols) * tool_button_w;
+    int y = r_tools.y + (slot / gd_tools.cols) * tool_button_h;
     int inset = max(2, tool_button_w / 12);
 
     dest = (SDL_Rect){x, y, tool_button_w, tool_button_h};
@@ -14875,10 +15046,21 @@ static void load_current(void)
 #if defined(__IOS__) && TARGET_OS_SIMULATOR
       fprintf(stderr, "Restore: %s, image %dx%d, canvas %dx%d, recovery=%d\n",
               fname, tmp->w, tmp->h, canvas->w, canvas->h, found_autosaved);
+      Uint8 restore_r, restore_g, restore_b, restore_a;
+      SDL_GetRGBA(getpixels[tmp->format->BytesPerPixel](tmp, 40, 40),
+                  tmp->format, &restore_r, &restore_g, &restore_b, &restore_a);
+      fprintf(stderr, "Loaded pixel: %u,%u,%u,%u; format=%s\n",
+              restore_r, restore_g, restore_b, restore_a, SDL_GetPixelFormatName(tmp->format->format));
 #endif
       org_surf = SDL_DisplayFormat(tmp);
       DEBUG_PRINTF("Smearing canvas @ 4\n");
       autoscale_copy_smear_free(tmp, canvas, SDL_BlitSurface);
+#if defined(__IOS__) && TARGET_OS_SIMULATOR
+      SDL_GetRGB(getpixels[canvas->format->BytesPerPixel](canvas, 40, 40),
+                 canvas->format, &restore_r, &restore_g, &restore_b);
+      fprintf(stderr, "Blitted pixel: %u,%u,%u; SDL error: %s\n",
+              restore_r, restore_g, restore_b, SDL_GetError());
+#endif
 
       /* First we run this for compatibility, then we will chek if
          there are data embedded in the png file */
@@ -14993,6 +15175,30 @@ static void save_current(void)
  * FIXME
  */
 /* Prompt the user with a yes/no question: */
+static int begin_flat_dialog(void)
+{
+#ifdef __IOS__
+  int active = ios_view.active;
+  ios_view.active = 0;
+  apple_controls_enabled(0);
+  SDL_Flip(screen);
+  return active;
+#else
+  return 0;
+#endif
+}
+
+static void end_flat_dialog(int active)
+{
+#ifdef __IOS__
+  ios_view.active = active;
+  apple_controls_enabled(active);
+  SDL_Flip(screen);
+#else
+  (void)active;
+#endif
+}
+
 static int do_prompt(const char *const text, const char *const btn_yes, const char *const btn_no, int ox, int oy)
 {
   return (do_prompt_image(text, btn_yes, btn_no, NULL, NULL, NULL, ox, oy));
@@ -15045,7 +15251,16 @@ static int do_prompt_image_flash(const char *const text,
 /**
  * FIXME
  */
-static int do_prompt_image_flash_snd(const char *const text,
+static int do_prompt_image_flash_snd_content(const char *const text, const char *const btn_yes, const char *const btn_no, SDL_Surface *img1, SDL_Surface *img2, SDL_Surface *img3, int animate, int snd, int ox, int oy);
+static int do_prompt_image_flash_snd(const char *const text, const char *const btn_yes, const char *const btn_no, SDL_Surface *img1, SDL_Surface *img2, SDL_Surface *img3, int animate, int snd, int ox, int oy)
+{
+  int active = begin_flat_dialog();
+  int result = do_prompt_image_flash_snd_content(text, btn_yes, btn_no, img1, img2, img3, animate, snd, ox, oy);
+  end_flat_dialog(active);
+  return result;
+}
+
+static int do_prompt_image_flash_snd_content(const char *const text,
                                      const char *const btn_yes,
                                      const char *const btn_no,
                                      SDL_Surface * img1, SDL_Surface * img2,
@@ -16378,6 +16593,32 @@ static int stamp_rotation(int ctr_x, int ctr_y, int ox, int oy)
  */
 /* Save the current image: */
 
+#ifdef __IOS__
+static int ios_write_share_image(void)
+{
+  const char *path = apple_share_path();
+  tmp_apply_uncommited_text();
+  SDL_BlitSurface(canvas, NULL, save_canvas, NULL);
+  SDL_BlitSurface(label, NULL, save_canvas, NULL);
+  FILE *file = fopen(path, "wb");
+  int result = file ? do_png_save(file, path, save_canvas, 0) : 0;
+  undo_tmp_applied_text();
+  return result;
+}
+
+static void ios_export_current(int action)
+{
+  if (!ios_write_share_image())
+  {
+    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Share Drawing",
+                            "The drawing could not be exported. Please try again.", window_screen);
+    return;
+  }
+  if (action == IOS_ACTION_PHOTOS) apple_save_to_photos(apple_share_path());
+  else apple_show_share(apple_share_path());
+}
+#endif
+
 static int do_save(int tool, int dont_show_success_results, int autosave)
 {
   int scroll;
@@ -16418,8 +16659,8 @@ static int do_save(int tool, int dont_show_success_results, int autosave)
                               PROMPT_SAVE_OVER_YES,
                               PROMPT_SAVE_OVER_NO,
                               img_save_over, NULL, NULL, SND_AREYOUSURE,
-                              (TOOL_SAVE % 2) * tool_button_w + tool_button_w / 2,
-                              (TOOL_SAVE / 2) * tool_button_h + r_ttools.h +
+                              (toolbar_slot_for_tool(TOOL_SAVE) % 2) * tool_button_w + tool_button_w / 2,
+                              (toolbar_slot_for_tool(TOOL_SAVE) / 2) * tool_button_h + r_ttools.h +
                               tool_button_h / 2 - tool_scroll * tool_button_h / gd_tools.cols + scroll) == 0)
       {
         /* No - Let's save a new picture! */
@@ -17243,8 +17484,8 @@ static int do_quit(int tool)
     scroll = (TOOLBAR_TOOL_COUNT > buttons_tall * gd_tools.cols) ? img_scroll_down->h : 0;
     done =
       do_prompt_snd(PROMPT_QUIT_TXT, PROMPT_QUIT_YES, PROMPT_QUIT_NO,
-                    SND_AREYOUSURE, (TOOL_QUIT % 2) * tool_button_w + tool_button_w / 2,
-                    (TOOL_QUIT / 2) * tool_button_h + r_ttools.h + tool_button_h / 2 -
+                    SND_AREYOUSURE, (toolbar_slot_for_tool(TOOL_QUIT) % 2) * tool_button_w + tool_button_w / 2,
+                    (toolbar_slot_for_tool(TOOL_QUIT) / 2) * tool_button_h + r_ttools.h + tool_button_h / 2 -
                     tool_scroll * tool_button_h / gd_tools.cols + scroll);
   }
   else
@@ -17306,7 +17547,19 @@ static int do_quit(int tool)
 /**
  * FIXME
  */
+static int do_open_content(void);
 static int do_open(void)
+{
+  int active = begin_flat_dialog();
+  int result = do_open_content();
+#ifdef __IOS__
+  if (result) tp_view_fit(&ios_view);
+#endif
+  end_flat_dialog(active);
+  return result;
+}
+
+static int do_open_content(void)
 {
   SDL_Surface *img, *img1, *img2, *org_surf;
   int things_alloced;
@@ -17646,8 +17899,8 @@ static int do_open(void)
     {
       do_prompt_snd(PROMPT_OPEN_NOFILES_TXT, PROMPT_OPEN_NOFILES_YES, "",
                     SND_YOUCANNOT,
-                    (TOOL_OPEN % 2) * tool_button_w + tool_button_w / 2,
-                    (TOOL_OPEN / 2) * tool_button_h + r_ttools.h + tool_button_h / 2 - tool_scroll * tool_button_h / gd_tools.cols);
+                    (toolbar_slot_for_tool(TOOL_OPEN) % 2) * tool_button_w + tool_button_w / 2,
+                    (toolbar_slot_for_tool(TOOL_OPEN) / 2) * tool_button_h + r_ttools.h + tool_button_h / 2 - tool_scroll * tool_button_h / gd_tools.cols);
     }
     else
     {
@@ -18618,7 +18871,16 @@ static int do_open(void)
  * FIXME
  */
 /* Slide Show Selection Screen: */
+static int do_slideshow_content(void);
 static int do_slideshow(void)
+{
+  int active = begin_flat_dialog();
+  int result = do_slideshow_content();
+  end_flat_dialog(active);
+  return result;
+}
+
+static int do_slideshow_content(void)
 {
   SDL_Surface *img, *img1, *img2;
   int things_alloced;
@@ -20219,8 +20481,8 @@ static void print_image(void)
                             PROMPT_PRINT_NOW_YES,
                             PROMPT_PRINT_NOW_NO,
                             img_printer, NULL, NULL, SND_AREYOUSURE,
-                            (TOOL_PRINT % 2) * tool_button_w + tool_button_w / 2,
-                            (TOOL_PRINT / 2) * tool_button_h + r_ttools.h +
+                            (toolbar_slot_for_tool(TOOL_PRINT) % 2) * tool_button_w + tool_button_w / 2,
+                            (toolbar_slot_for_tool(TOOL_PRINT) / 2) * tool_button_h + r_ttools.h +
                             tool_button_h / 2 - tool_scroll * tool_button_h / gd_tools.cols + scroll))
     {
       do_print();
@@ -21070,6 +21332,23 @@ static void handle_keymouse(SDLKey key, Uint32 updown, int steps, SDL_Rect * are
 /* A subset of keys that will move one button at a time and jump between r_canvas<->r_tools<->r_colors */
 static void handle_keymouse_buttons(SDLKey key, int *whicht, int *whichc, SDL_Rect real_r_tools)
 {
+#ifdef __IOS__
+  if (hit_test(&real_r_tools, oldpos_x, oldpos_y) &&
+      (key == SDLK_F7 || key == SDLK_F8 || key == SDLK_F11 || key == SDLK_F12))
+  {
+    int slot = grid_hit_gd(&real_r_tools, oldpos_x, oldpos_y, &gd_tools);
+    int step = key == SDLK_F7 ? 2 : key == SDLK_F8 ? -2 : key == SDLK_F12 ? 1 : -1;
+    for (int i = 0; i < TOOLBAR_TOOL_COUNT; i++)
+    {
+      slot = (slot + step + TOOLBAR_TOOL_COUNT) % TOOLBAR_TOOL_COUNT;
+      if (tool_avail[toolbar_tool_at(slot)]) break;
+    }
+    *whicht = toolbar_tool_at(slot);
+    SDL_WarpMouse((slot % 2) * tool_button_w + tool_button_w / 2,
+                  r_tools.y + (slot / 2) * tool_button_h + tool_button_h / 2);
+    return;
+  }
+#endif
   if (hit_test(&real_r_tools, oldpos_x, oldpos_y) &&
       (key == SDLK_F7 || key == SDLK_F8 || key == SDLK_F11 || key == SDLK_F12))
   {
@@ -21166,9 +21445,9 @@ static void handle_keymouse_buttons(SDLKey key, int *whicht, int *whichc, SDL_Re
     else if (hit_test(&r_colors, oldpos_x, oldpos_y))
       SDL_WarpMouse(WINDOW_WIDTH / 2, WINDOW_HEIGHT / 2);
     else
-      SDL_WarpMouse(tool_button_w / 2 + *whicht % 2 * tool_button_w,
-                    real_r_tools.y - *whicht % 2 * tool_button_h / 2 +
-                    *whicht * tool_button_h / 2 + 10 - tool_scroll * tool_button_h / 2);
+      SDL_WarpMouse(tool_button_w / 2 + toolbar_slot_for_tool(*whicht) % 2 * tool_button_w,
+                    real_r_tools.y + toolbar_slot_for_tool(*whicht) / 2 * tool_button_h +
+                    tool_button_h / 2 - tool_scroll * tool_button_h / 2);
 
     /* Play a sound here as there is a big jump */
     playsound(screen, 1, SND_CLICK, 0, SNDPOS_LEFT, SNDDIST_NEAR);
@@ -22914,7 +23193,19 @@ static SDL_Surface *magic_rotate_scale(SDL_Surface * surf, int r, int w)
  * FIXME
  */
 /* FIXME: This, do_open() and do_slideshow() should be combined and modularized! */
+static int do_new_dialog_content(void);
 static int do_new_dialog(void)
+{
+  int active = begin_flat_dialog();
+  int result = do_new_dialog_content();
+#ifdef __IOS__
+  if (result) tp_view_fit(&ios_view);
+#endif
+  end_flat_dialog(active);
+  return result;
+}
+
+static int do_new_dialog_content(void)
 {
   SDL_Surface *img, *img1, *img2;
   int things_alloced;
@@ -24394,7 +24685,16 @@ static Uint8 magic_touched(int x, int y)
  *   for a color to be clicked in the canvas, or the "Back"
  *   button to be clicked)
  */
+static int do_color_sel_content(int temp_mode);
 static int do_color_sel(int temp_mode)
+{
+  int active = begin_flat_dialog();
+  int result = do_color_sel_content(temp_mode);
+  end_flat_dialog(active);
+  return result;
+}
+
+static int do_color_sel_content(int temp_mode)
 {
 #ifndef NO_PROMPT_SHADOWS
   SDL_Surface *alpha_surf;
@@ -24888,7 +25188,16 @@ static void do_quick_eraser(void)
  * Display a large prompt, allowing the user to pick a
  * color from a large palette.
  */
+static int do_color_picker_content(int prev_color);
 static int do_color_picker(int prev_color)
+{
+  int active = begin_flat_dialog();
+  int result = do_color_picker_content(prev_color);
+  end_flat_dialog(active);
+  return result;
+}
+
+static int do_color_picker_content(int prev_color)
 {
 #ifndef NO_PROMPT_SHADOWS
   int i;
@@ -25814,7 +26123,16 @@ int mixer_undo_buf[NUM_COLOR_MIX_UNDO_BUFS];
  * Display a large prompt, allowing the user to mix
  * colors together from hues and black/grey/white.
  */
+static int do_color_mix_content(void);
 static int do_color_mix(void)
+{
+  int active = begin_flat_dialog();
+  int result = do_color_mix_content();
+  end_flat_dialog(active);
+  return result;
+}
+
+static int do_color_mix_content(void)
 {
   int i, btn_clicked;
 
@@ -29887,6 +30205,9 @@ int TP_EventFilter( __attribute__((unused))
   }
 #endif
   if (event->type == SDL_QUIT ||
+#ifdef __IOS__
+      event->type == SDL_FINGERDOWN || event->type == SDL_FINGERMOTION || event->type == SDL_FINGERUP ||
+#endif
       event->type == SDL_WINDOWEVENT ||
 #ifndef __IPHONEOS__
       event->type == SDL_JOYAXISMOTION ||
@@ -30014,6 +30335,11 @@ static void setup(void)
   /* Set up event filter */
 
   SDL_SetEventFilter(TP_EventFilter, NULL);
+#ifdef __IOS__
+  SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "0");
+  SDL_SetHint(SDL_HINT_MOUSE_TOUCH_EVENTS, "0");
+  ios_kids_mode = apple_kids_mode();
+#endif
 
 
   /* Set up joystick */
@@ -30595,6 +30921,9 @@ static void setup(void)
 
   canvas_width = r_canvas.w;
   canvas_height = r_canvas.h;
+#ifdef __IOS__
+  tp_view_init(&ios_view, r_canvas.x, r_canvas.y, r_canvas.w, r_canvas.h);
+#endif
 
   DEBUG_PRINTF("Canvas size is %d x %d\n", canvas_width, canvas_height);
 
@@ -31418,6 +31747,7 @@ int main(int argc, char *argv[])
   /* Set up! */
   setup();
 #ifdef __IOS__
+  apple_install_controls(window_screen, renderer, r_ttools.x, r_ttools.y, r_ttools.w, r_ttools.h);
   ios_recovery_ready = 1;
 #if TARGET_OS_SIMULATOR
   /* CI-only fixture: exercise the real lifecycle save and startup restore. */

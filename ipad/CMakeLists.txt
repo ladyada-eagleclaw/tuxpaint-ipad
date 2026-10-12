@@ -87,7 +87,7 @@ target_include_directories(imagequant PUBLIC ${quant_SOURCE_DIR})
 set(TUX "${CMAKE_CURRENT_SOURCE_DIR}/../tuxpaint-tuxpaint")
 set(core_sources cursor dirwalk fill fonts get_fname gifenc i18n im
   onscreen_keyboard pixels playsound progressbar rgblinear sounds tuxpaint)
-set(app_sources IOSBridge.m ../IOS/TuxPaint/language.m
+set(app_sources IOSBridge.m CanvasView.c ../IOS/TuxPaint/language.m
   "${TUX}/src/ios.m" "${TUX}/src/ios_print.m" "${TUX}/obj/parse.c")
 foreach(source IN LISTS core_sources)
   list(APPEND app_sources "${TUX}/src/${source}.c")
@@ -95,6 +95,7 @@ endforeach()
 file(GLOB magic_sources CONFIGURE_DEPENDS "${TUX}/magic/src/*.c")
 add_executable(TuxPaint MACOSX_BUNDLE ${app_sources} ${magic_sources})
 target_include_directories(TuxPaint PRIVATE "${TUX}/src" "${TUX}/src/mouse"
+  "${CMAKE_CURRENT_SOURCE_DIR}"
   "${png_SOURCE_DIR}" "${png_BINARY_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/include")
 # The older port mixes SDL2/foo.h with foo.h includes.
 file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/include/SDL2")

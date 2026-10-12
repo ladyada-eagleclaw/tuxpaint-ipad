@@ -42,6 +42,11 @@ jobs:
           -DCMAKE_OSX_ARCHITECTURES=arm64
           -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0
           -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+      - name: Check canvas gestures and coordinates
+        if: matrix.sdk == 'iphonesimulator'
+        run: |
+          cc -std=c11 -Wall -Wextra -Werror ipad/CanvasView.c ipad/tests/canvas_view_test.c -lm -o "$RUNNER_TEMP/canvas-view-test"
+          "$RUNNER_TEMP/canvas-view-test"
       - name: Compile
         run: cmake --build build-ipad --config Release --target TuxPaint --parallel 3
       - name: Package unsigned app
@@ -90,6 +95,7 @@ jobs:
               test -s "$drawings/saved/AUTOSAVED.png"
               cp "$drawings/saved/AUTOSAVED.png" "artifacts/$model/recovery.png"
               xcrun simctl terminate "$device" org.ladyada.tuxpaint.ipad
+              cp "$drawings/saved/AUTOSAVED.png" "artifacts/$model/recovery-after-termination.png"
               launch_result=$(SIMCTL_CHILD_TUXPAINT_TEST_RECOVERY=verify xcrun simctl launch --stdout="$PWD/artifacts/$model/restore-stdout.txt" --stderr="$PWD/artifacts/$model/restore-stderr.txt" "$device" org.ladyada.tuxpaint.ipad)
               app_pid=${launch_result##*: }
               for attempt in {1..45}; do

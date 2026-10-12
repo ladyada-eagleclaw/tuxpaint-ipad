@@ -36,5 +36,22 @@ struct SDL_Window;
 struct SDL_Renderer;
 void apple_apply_safe_area(struct SDL_Window *window, struct SDL_Renderer *renderer);
 
+enum {
+  IOS_ACTION_MENU = 0x545500,
+  IOS_ACTION_SHARE,
+  IOS_ACTION_PHOTOS,
+  IOS_ACTION_KIDS,
+  IOS_ACTION_FIT,
+  IOS_ACTION_VIEW_CHANGED
+};
+int apple_kids_mode(void);
+void apple_set_kids_mode(int enabled);
+void apple_install_controls(struct SDL_Window *window, struct SDL_Renderer *renderer,
+                            int x, int y, int width, int height);
+void apple_show_share(const char *filename);
+void apple_save_to_photos(const char *filename);
+const char *apple_share_path(void);
+void apple_controls_enabled(int enabled);
+
 
 #endif /* __IOS_H__ */
