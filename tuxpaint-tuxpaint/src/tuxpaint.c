@@ -30624,7 +30624,11 @@ static void setup(void)
 
 
   /* Open Window: */
+#ifdef __IOS__
+  SDL_SetHint(SDL_HINT_RENDER_DRIVER, "metal");
+#else
   SDL_SetHint(SDL_HINT_RENDER_DRIVER, "opengles2");
+#endif
   if (fullscreen)
   {
 #ifdef USE_HWSURFACE
@@ -30646,7 +30650,7 @@ static void setup(void)
 
     if (native_screensize)
     {
-      SDL_GL_GetDrawableSize(window_screen, &ww, &hh);
+      SDL_GetRendererOutputSize(renderer, &ww, &hh);
 
       /* Tuxpaint goes wrong under 500x480.
          Scale it using SDL2 features */
@@ -30819,7 +30823,7 @@ static void setup(void)
 
 
     renderer = SDL_CreateRenderer(window_screen, -1, 0);
-    SDL_GL_GetDrawableSize(window_screen, &ww, &hh);
+    SDL_GetRendererOutputSize(renderer, &ww, &hh);
     texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGB888, SDL_TEXTUREACCESS_STATIC, ww, hh);
 
     screen = SDL_CreateRGBSurface(0, ww, hh, 32, 0x00FF0000, 0x0000FF00, 0x000000FF, 0xFF000000);

@@ -7,7 +7,7 @@ on:
       devices:
         description: Simulator coverage
         type: choice
-        options: [all, pro, phone]
+        options: [all, pro, phone, mini]
         default: all
 permissions:
   contents: read
@@ -63,6 +63,9 @@ jobs:
           app=$(find build-ipad -maxdepth 3 -name TuxPaint.app -type d | head -1)
           for model in 'iPhone 16' 'iPad mini (6th generation)' 'iPad Pro (12.9-inch) (5th generation)'; do
             if [[ '${{ inputs.devices }}' == phone && "$model" != 'iPhone 16' ]]; then
+              continue
+            fi
+            if [[ '${{ inputs.devices }}' == mini && "$model" != 'iPad mini (6th generation)' ]]; then
               continue
             fi
             if [[ '${{ inputs.devices }}' == pro && "$model" != 'iPad Pro (12.9-inch) (5th generation)' ]]; then
@@ -125,14 +128,17 @@ jobs:
             # Check the displayed pixel as well as the saved canvas pixels.
             python3 - "artifacts/$model" <<'PY'
           import pathlib, sys
-          from PIL import Image
+          from PIL import Image, ImageChops
           folder = pathlib.Path(sys.argv[1])
-          x, y, w, h = map(int, (folder / 'zoom-sample.txt').read_text().split())
+          x, y, w, h = map(float, (folder / 'zoom-sample.txt').read_text().split())
           im = Image.open(folder / 'zoom.png').convert('RGB')
-          if (im.width > im.height) == (w > h):
-              px, py = round(x * im.width / w), round(y * im.height / h)
+          # iPads can letterbox a landscape app inside a portrait screenshot.
+          left, top, right, bottom = ImageChops.difference(im, Image.new('RGB', im.size)).getbbox()
+          width, height = right-left, bottom-top
+          if (width > height) == (w > h):
+              px, py = left + round(x * width / w), top + round(y * height / h)
           else:
-              px, py = im.width - 1 - round(y * im.width / h), round(x * im.height / w)
+              px, py = right - 1 - round(y * width / h), top + round(x * height / w)
           pixels = [im.getpixel((xx, yy)) for yy in range(max(0, py-8), min(im.height, py+9))
                     for xx in range(max(0, px-8), min(im.width, px+9))]
           assert any(max(rgb) < 100 for rgb in pixels), f'Paint is not visible near screenshot pixel {px},{py}'
