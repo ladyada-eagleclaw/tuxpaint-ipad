@@ -112,6 +112,13 @@ jobs:
               echo 'PASS: drawing survived background, termination, and relaunch.'
             fi
             for attempt in {1..45}; do
+              [[ -f "$drawings/zoom-ready.txt" ]] && break
+              sleep 1
+            done
+            test -f "$drawings/zoom-ready.txt"
+            xcrun simctl io "$device" screenshot "artifacts/$model/zoom.png"
+            touch "$drawings/zoom-captured.txt"
+            for attempt in {1..45}; do
               [[ -f "$drawings/features-verified.txt" ]] && break
               sleep 1
             done
@@ -121,7 +128,13 @@ jobs:
             xcrun simctl io "$device" screenshot "artifacts/$model/launch.png"
             xcrun simctl terminate "$device" org.ladyada.tuxpaint.ipad
             SIMCTL_CHILD_TUXPAINT_TEST_FEATURES=share-only xcrun simctl launch --stderr="$PWD/artifacts/$model/share-stderr.txt" "$device" org.ladyada.tuxpaint.ipad
-            sleep 8
+            for attempt in {1..45}; do
+              [[ -f "$drawings/share-presented.txt" ]] && break
+              sleep 1
+            done
+            test -f "$drawings/share-presented.txt"
+            cp "$drawings/share-presented.txt" "artifacts/$model/"
+            sleep 2
             xcrun simctl io "$device" screenshot "artifacts/$model/share.png"
             xcrun simctl terminate "$device" org.ladyada.tuxpaint.ipad
             xcrun simctl privacy "$device" grant photos-add org.ladyada.tuxpaint.ipad

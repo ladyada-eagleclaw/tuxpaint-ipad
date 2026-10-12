@@ -154,7 +154,16 @@ void apple_show_share(const char *filename)
             initWithActivityItems:@[url] applicationActivities:nil];
         sheet.popoverPresentationController.sourceView = menuButton;
         sheet.popoverPresentationController.sourceRect = menuButton.bounds;
-        [paintController presentViewController:sheet animated:YES completion:nil];
+        [paintController presentViewController:sheet animated:YES completion:^{
+#if TARGET_OS_SIMULATOR
+            if (SDL_getenv("TUXPAINT_TEST_FEATURES")) {
+                NSString *directory = [NSString stringWithUTF8String:apple_preferencesPath()];
+                [@"PASS: iOS share sheet presented\n" writeToFile:
+                    [directory stringByAppendingPathComponent:@"share-presented.txt"]
+                    atomically:YES encoding:NSUTF8StringEncoding error:nil];
+            }
+#endif
+        }];
     });
 }
 

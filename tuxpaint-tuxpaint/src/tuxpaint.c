@@ -16686,6 +16686,7 @@ static int do_save(int tool, int dont_show_success_results, int autosave)
 {
 #ifdef __IOS__
   if (ios_save_in_progress) return 0;
+  if (!autosave) ios_checkpoint();
   ios_save_in_progress = 1;
 #endif
   int result = do_save_content(tool, dont_show_success_results, autosave);

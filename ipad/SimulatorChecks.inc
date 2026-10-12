@@ -89,14 +89,36 @@ static void ios_simulator_checks(void)
   {
     ios_test_require(!ios_test_white(painted_x, painted_y), "Touch paints at the inverse-mapped canvas position");
     ios_test_require(ios_test_white(canvas->w * 0.3f, canvas->h * 0.3f), "Zoomed touch does not paint at the untransformed position");
-    ios_test_tool(TOOL_UNDO);
+    char *ready = get_fname("zoom-ready.txt", DIR_SAVE);
+    FILE *marker = fopen(ready, "w");
+    ios_test_require(marker != NULL, "Notify simulator screenshot checkpoint");
+    fclose(marker);
+    free(ready);
   }
   else if (phase == 3)
+  {
+    char *captured = get_fname("zoom-captured.txt", DIR_SAVE);
+    int exists = access(captured, F_OK) == 0;
+    free(captured);
+    if (!exists) return;
+    if (ios_recovery_pending) return;
+    char *recovery = get_fname("saved/" AUTOSAVED_NAME FNAME_EXTENSION, DIR_SAVE);
+    SDL_Surface *checkpoint = IMG_Load(recovery);
+    free(recovery);
+    ios_test_require(checkpoint != NULL, "Idle pause creates a recovery drawing");
+    Uint8 r, g, b;
+    SDL_GetRGB(getpixels[checkpoint->format->BytesPerPixel](checkpoint, painted_x, painted_y),
+                checkpoint->format, &r, &g, &b);
+    ios_test_require(r != 255 || g != 255 || b != 255, "Idle recovery includes the latest stroke");
+    SDL_FreeSurface(checkpoint);
+    ios_test_tool(TOOL_UNDO);
+  }
+  else if (phase == 4)
   {
     ios_test_require(ios_test_white(painted_x, painted_y), "Undo removes the zoomed stroke");
     ios_test_tool(TOOL_REDO);
   }
-  else if (phase == 4)
+  else if (phase == 5)
   {
     ios_test_require(!ios_test_white(painted_x, painted_y), "Redo restores the zoomed stroke");
     ios_test_require(ios_write_share_image(), "Export writes a PNG while zoomed");
@@ -121,19 +143,19 @@ static void ios_simulator_checks(void)
     ios_test_require(ios_view.active && ios_view.zoom > 1.9f, "Leaving a dialog restores the canvas view");
     if (!ios_kids_mode) ios_test_action(IOS_ACTION_KIDS);
   }
-  else if (phase == 5)
+  else if (phase == 6)
   {
     ios_test_require(TOOLBAR_TOOL_COUNT == 10 && gd_tools.rows == 5 && apple_kids_mode(),
                       "Kids Mode has ten tools in five rows and persists its setting");
     ios_test_tool(TOOL_ERASER);
   }
-  else if (phase == 6)
+  else if (phase == 7)
   {
     ios_test_require(cur_tool == TOOL_ERASER, "Kids Mode touch selects the mapped tool");
     ios_test_tool(TOOL_BRUSH);
     ios_test_action(IOS_ACTION_FIT);
   }
-  else if (phase == 7)
+  else if (phase == 8)
   {
     ios_test_require(cur_tool == TOOL_BRUSH && ios_view.zoom == 1, "Brush and Fit Drawing work in Kids Mode");
     ios_checkpoint();
